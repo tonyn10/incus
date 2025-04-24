@@ -41,6 +41,9 @@ type Config struct {
 
 	// OIDC tokens
 	oidcTokens map[string]*oidc.Tokens[*oidc.IDTokenClaims]
+
+	// Defaults holds default configurations the CLI uses
+	Defaults DefaultSettings `yaml:"default-settings"`
 }
 
 // GlobalConfigPath returns a joined path of the global configuration directory and passed arguments.

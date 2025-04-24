@@ -30,6 +30,12 @@ var DefaultRemotes = map[string]Remote{
 	"local":  LocalRemote,
 }
 
+// Default CLI configurations
+type DefaultSettings struct {
+	// Default flag format for list commands
+	ListFormat string `yaml:"list-format`
+}
+
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{

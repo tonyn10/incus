@@ -568,3 +568,12 @@ func (c *cmdGlobal) checkArgs(cmd *cobra.Command, args []string, minArgs int, ma
 
 	return false, nil
 }
+
+// Return the default list format if one was set, otherwise return "table"
+func (c *cmdGlobal) defaultListFormat() string {
+	if c.conf == nil || c.conf.Defaults.ListFormat == "" {
+		return "table"
+	}
+
+	return c.conf.Defaults.ListFormat
+}
