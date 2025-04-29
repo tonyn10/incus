@@ -194,7 +194,9 @@ type InstanceServer interface {
 	// Network functions ("network" API extension)
 	GetNetworkNames() (names []string, err error)
 	GetNetworks() (networks []api.Network, err error)
+	GetNetworksWithFilter(filters []string) (networks []api.Network, err error)
 	GetNetworksAllProjects() (networks []api.Network, err error)
+	GetNetworksAllProjectsWithFilter(filters []string) (networks []api.Network, err error)
 	GetNetwork(name string) (network *api.Network, ETag string, err error)
 	GetNetworkLeases(name string) (leases []api.NetworkLease, err error)
 	GetNetworkState(name string) (state *api.NetworkState, err error)
@@ -303,6 +305,7 @@ type InstanceServer interface {
 	// Project functions
 	GetProjectNames() (names []string, err error)
 	GetProjects() (projects []api.Project, err error)
+	GetProjectsWithFilter(filters []string) (projects []api.Project, err error)
 	GetProject(name string) (project *api.Project, ETag string, err error)
 	GetProjectState(name string) (project *api.ProjectState, err error)
 	GetProjectAccess(name string) (access api.Access, err error)
@@ -324,7 +327,9 @@ type InstanceServer interface {
 	// Storage bucket functions ("storage_buckets" API extension)
 	GetStoragePoolBucketNames(poolName string) ([]string, error)
 	GetStoragePoolBucketsAllProjects(poolName string) ([]api.StorageBucket, error)
+	GetStoragePoolBucketsWithFilterAllProjects(poolName string, filters []string) (bucket []api.StorageBucket, err error)
 	GetStoragePoolBuckets(poolName string) ([]api.StorageBucket, error)
+	GetStoragePoolBucketsWithFilter(poolName string, filters []string) (bucket []api.StorageBucket, err error)
 	GetStoragePoolBucket(poolName string, bucketName string) (bucket *api.StorageBucket, ETag string, err error)
 	CreateStoragePoolBucket(poolName string, bucket api.StorageBucketsPost) (*api.StorageBucketKey, error)
 	UpdateStoragePoolBucket(poolName string, bucketName string, bucket api.StorageBucketPut, ETag string) (err error)
@@ -380,6 +385,7 @@ type InstanceServer interface {
 
 	// Storage volume ISO import function ("custom_volume_iso" API extension)
 	CreateStoragePoolVolumeFromISO(pool string, args StorageVolumeBackupArgs) (op Operation, err error)
+	CreateStoragePoolVolumeFromMigration(pool string, volume api.StorageVolumesPost) (op Operation, err error)
 
 	// Cluster functions ("cluster" API extensions)
 	GetCluster() (cluster *api.Cluster, ETag string, err error)

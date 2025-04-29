@@ -194,8 +194,8 @@ func qemuInstantiate(s *state.State, args db.InstanceArgs, expandedDevices devic
 // qemuCreate creates a new storage volume record and returns an initialized Instance.
 // Returns a revert fail function that can be used to undo this function if a subsequent step fails.
 func qemuCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operations.Operation) (instance.Instance, revert.Hook, error) {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Create the instance struct.
 	d := &qemu{
@@ -308,7 +308,7 @@ func qemuCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operati
 			return nil, nil, err
 		}
 
-		revert.Add(cleanup)
+		reverter.Add(cleanup)
 	}
 
 	if d.isSnapshot {
@@ -325,7 +325,7 @@ func qemuCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operati
 			logger.Error("Failed to add instance to authorizer", logger.Ctx{"name": d.Name(), "project": d.project.Name, "error": err})
 		}
 
-		revert.Add(func() { d.state.Authorizer.DeleteInstance(d.state.ShutdownCtx, d.project.Name, d.Name()) })
+		reverter.Add(func() { _ = d.state.Authorizer.DeleteInstance(d.state.ShutdownCtx, d.project.Name, d.Name()) })
 
 		d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceCreated.Event(d, map[string]any{
 			"type":         api.InstanceTypeVM,
@@ -334,8 +334,9 @@ func qemuCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operati
 		}))
 	}
 
-	cleanup := revert.Clone().Fail
-	revert.Success()
+	cleanup := reverter.Clone().Fail
+	reverter.Success()
+
 	return d, cleanup, err
 }
 
@@ -364,6 +365,63 @@ type qemu struct {
 // Callers should check that the instance is running (and therefore mounted) before calling this function,
 // otherwise the qmp.Connect call will fail to use the monitor socket file.
 func (d *qemu) getAgentClient() (*http.Client, error) {
+	if d.isWindows() {
+		// Get known network details.
+		networks, err := d.getNetworkState()
+		if err != nil {
+			return nil, errQemuAgentOffline
+		}
+
+		// The connection uses mutual authentication, so use the server's key & cert for client.
+		agentCert, _, clientCert, clientKey, err := d.generateAgentCert()
+		if err != nil {
+			return nil, err
+		}
+
+		// Get the TLS configuration.
+		tlsConfig, err := localtls.GetTLSConfigMem(clientCert, clientKey, "", agentCert, false)
+		if err != nil {
+			return nil, err
+		}
+
+		// Setup an HTTPS client.
+		client := &http.Client{}
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			// Replicate the headers.
+			req.Header = via[len(via)-1].Header
+
+			return nil
+		}
+
+		for _, netInterface := range networks {
+			for _, address := range netInterface.Addresses {
+				if address.Scope != "global" {
+					continue
+				}
+
+				networkAddress := net.JoinHostPort(address.Address, strconv.Itoa(ports.HTTPSDefaultPort))
+
+				client.Transport = &http.Transport{
+					TLSClientConfig: tlsConfig,
+					DialContext: func(_ context.Context, network, addr string) (net.Conn, error) {
+						return net.Dial("tcp", networkAddress)
+					},
+					DisableKeepAlives:     true,
+					ExpectContinueTimeout: time.Second * 30,
+					ResponseHeaderTimeout: time.Second * 3600,
+					TLSHandshakeTimeout:   time.Second * 5,
+				}
+
+				_, err := client.Get("https://agent/")
+				if err == nil {
+					return client, nil
+				}
+			}
+		}
+
+		return nil, errQemuAgentOffline
+	}
+
 	// Check if the agent is running.
 	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
@@ -753,7 +811,7 @@ func (d *qemu) Shutdown(timeout time.Duration) error {
 	// Send the system_powerdown command.
 	err = monitor.Powerdown()
 	if err != nil {
-		if err == qmp.ErrMonitorDisconnect {
+		if errors.Is(err, qmp.ErrMonitorDisconnect) {
 			op.Done(nil)
 			return nil
 		}
@@ -815,7 +873,7 @@ func (d *qemu) Rebuild(img *api.Image, op *operations.Operation) error {
 func (d *qemu) killQemuProcess(pid int) error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		if err == os.ErrProcessDone {
+		if errors.Is(err, os.ErrProcessDone) {
 			return nil
 		}
 
@@ -824,7 +882,7 @@ func (d *qemu) killQemuProcess(pid int) error {
 
 	err = proc.Kill()
 	if err != nil {
-		if err == os.ErrProcessDone {
+		if errors.Is(err, os.ErrProcessDone) {
 			return nil
 		}
 
@@ -1224,8 +1282,8 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		return err
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Rotate the log files.
 	for _, logfile := range []string{d.LogFilePath(), d.ConsoleBufferLogPath(), d.QMPLogFilePath()} {
@@ -1260,7 +1318,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		return err
 	}
 
-	revert.Add(func() { _ = d.unmount() })
+	reverter.Add(func() { _ = d.unmount() })
 
 	// Define a set of files to open and pass their file descriptors to QEMU command.
 	fdFiles := make([]*os.File, 0)
@@ -1409,7 +1467,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 			return err
 		}
 
-		revert.Add(func() {
+		reverter.Add(func() {
 			err := d.deviceStop(dev, false, "")
 			if err != nil {
 				d.logger.Error("Failed to cleanup device", logger.Ctx{"device": dev.Name(), "err": err})
@@ -1421,7 +1479,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		}
 
 		if runConf.Revert != nil {
-			revert.Add(runConf.Revert)
+			reverter.Add(runConf.Revert)
 		}
 
 		// Add post-start hooks
@@ -1449,7 +1507,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		return err
 	}
 
-	revert.Add(func() { _ = d.configDriveMountPathClear() })
+	reverter.Add(func() { _ = d.configDriveMountPathClear() })
 
 	// Mount the config drive device as readonly. This way it will be readonly irrespective of whether its
 	// exported via 9p for virtio-fs.
@@ -1523,12 +1581,12 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 
 			// Try to get the cluster group.
 			group, err := dbCluster.GetClusterGroup(ctx, tx.Tx(), clusterGroupName)
-			if err != nil && err != sql.ErrNoRows {
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
 
 			// Fallback to default group.
-			if err == sql.ErrNoRows && clusterGroupName != "default" {
+			if errors.Is(err, sql.ErrNoRows) && clusterGroupName != "default" {
 				group, err = dbCluster.GetClusterGroup(ctx, tx.Tx(), "default")
 				if err != nil {
 					return err
@@ -1835,7 +1893,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		return err
 	}
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		_ = d.killQemuProcess(pid)
 	})
 
@@ -2004,7 +2062,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		return err
 	}
 
-	revert.Success()
+	reverter.Success()
 
 	// Post-start startup hook
 	err = d.startupHook(monitor, "post-start")
@@ -2348,8 +2406,8 @@ func (d *qemu) deviceStart(dev device.Device, instanceRunning bool) (*deviceConf
 	l := d.logger.AddContext(logger.Ctx{"device": dev.Name(), "type": configCopy["type"]})
 	l.Debug("Starting device")
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	if instanceRunning && !dev.CanHotPlug() {
 		return nil, fmt.Errorf("Device cannot be started when instance is running")
@@ -2360,7 +2418,7 @@ func (d *qemu) deviceStart(dev device.Device, instanceRunning bool) (*deviceConf
 		return nil, err
 	}
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		runConf, _ := dev.Stop()
 		if runConf != nil {
 			_ = d.runHooks(runConf.PostHooks)
@@ -2419,7 +2477,8 @@ func (d *qemu) deviceStart(dev device.Device, instanceRunning bool) (*deviceConf
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return runConf, nil
 }
 
@@ -2971,6 +3030,7 @@ func (d *qemu) spiceCmdlineConfig() string {
 // inside the VM's config volume so that it can be restricted by quota.
 // Requires the instance be mounted before calling this function.
 func (d *qemu) generateConfigShare() error {
+	isWindows := d.isWindows()
 	configDrivePath := filepath.Join(d.Path(), "config")
 
 	// Create config drive dir if doesn't exist, if it does exist, leave it around so we don't regenerate all
@@ -2980,88 +3040,92 @@ func (d *qemu) generateConfigShare() error {
 		return err
 	}
 
-	// Add the VM agent.
-	agentSrcPath, _ := exec.LookPath("incus-agent")
-	if util.PathExists(os.Getenv("INCUS_AGENT_PATH")) {
-		// Install incus-agent script (loads from agent share).
-		agentFile, err := incusAgentLoader.ReadFile("agent-loader/incus-agent")
-		if err != nil {
-			return err
-		}
-
-		err = os.WriteFile(filepath.Join(configDrivePath, "incus-agent"), agentFile, 0o700)
-		if err != nil {
-			return err
-		}
-
-		// Legacy support.
-		_ = os.Remove(filepath.Join(configDrivePath, "lxd-agent"))
-		err = os.Symlink("incus-agent", filepath.Join(configDrivePath, "lxd-agent"))
-		if err != nil {
-			return err
-		}
-	} else if agentSrcPath != "" {
-		// Install agent into config drive dir if found.
-		agentSrcPath, err = filepath.EvalSymlinks(agentSrcPath)
-		if err != nil {
-			return err
-		}
-
-		agentSrcInfo, err := os.Stat(agentSrcPath)
-		if err != nil {
-			return fmt.Errorf("Failed getting info for incus-agent source %q: %w", agentSrcPath, err)
-		}
-
-		agentInstallPath := filepath.Join(configDrivePath, "incus-agent")
-		agentNeedsInstall := true
-
-		if util.PathExists(agentInstallPath) {
-			agentInstallInfo, err := os.Stat(agentInstallPath)
-			if err != nil {
-				return fmt.Errorf("Failed getting info for existing incus-agent install %q: %w", agentInstallPath, err)
-			}
-
-			if agentInstallInfo.ModTime() == agentSrcInfo.ModTime() && agentInstallInfo.Size() == agentSrcInfo.Size() {
-				agentNeedsInstall = false
-			}
-		}
-
-		// Only install the agent into config drive if the existing one is different to the source one.
-		// Otherwise we would end up copying it again and this can cause unnecessary snapshot usage.
-		if agentNeedsInstall {
-			d.logger.Debug("Installing incus-agent", logger.Ctx{"srcPath": agentSrcPath, "installPath": agentInstallPath})
-			err = internalUtil.FileCopy(agentSrcPath, agentInstallPath)
+	if !isWindows {
+		// Add the VM agent loader.
+		agentSrcPath, _ := exec.LookPath("incus-agent")
+		if util.PathExists(os.Getenv("INCUS_AGENT_PATH")) {
+			// Install incus-agent script (loads from agent share).
+			agentFile, err := incusAgentLoader.ReadFile("agent-loader/incus-agent")
 			if err != nil {
 				return err
 			}
 
-			err = os.Chmod(agentInstallPath, 0o500)
+			err = os.WriteFile(filepath.Join(configDrivePath, "incus-agent"), agentFile, 0o700)
 			if err != nil {
 				return err
 			}
 
-			err = os.Chown(agentInstallPath, 0, 0)
+			if !isWindows {
+				// Legacy support.
+				_ = os.Remove(filepath.Join(configDrivePath, "lxd-agent"))
+				err = os.Symlink("incus-agent", filepath.Join(configDrivePath, "lxd-agent"))
+				if err != nil {
+					return err
+				}
+			}
+		} else if agentSrcPath != "" {
+			// Install agent into config drive dir if found.
+			agentSrcPath, err = filepath.EvalSymlinks(agentSrcPath)
 			if err != nil {
 				return err
 			}
 
-			// Ensure we copy the source file's timestamps so they can be used for comparison later.
-			err = os.Chtimes(agentInstallPath, agentSrcInfo.ModTime(), agentSrcInfo.ModTime())
+			agentSrcInfo, err := os.Stat(agentSrcPath)
 			if err != nil {
-				return fmt.Errorf("Failed setting incus-agent timestamps: %w", err)
+				return fmt.Errorf("Failed getting info for incus-agent source %q: %w", agentSrcPath, err)
+			}
+
+			agentInstallPath := filepath.Join(configDrivePath, "incus-agent")
+			agentNeedsInstall := true
+
+			if util.PathExists(agentInstallPath) {
+				agentInstallInfo, err := os.Stat(agentInstallPath)
+				if err != nil {
+					return fmt.Errorf("Failed getting info for existing incus-agent install %q: %w", agentInstallPath, err)
+				}
+
+				if agentInstallInfo.ModTime().Equal(agentSrcInfo.ModTime()) && agentInstallInfo.Size() == agentSrcInfo.Size() {
+					agentNeedsInstall = false
+				}
+			}
+
+			// Only install the agent into config drive if the existing one is different to the source one.
+			// Otherwise we would end up copying it again and this can cause unnecessary snapshot usage.
+			if agentNeedsInstall {
+				d.logger.Debug("Installing incus-agent", logger.Ctx{"srcPath": agentSrcPath, "installPath": agentInstallPath})
+				err = internalUtil.FileCopy(agentSrcPath, agentInstallPath)
+				if err != nil {
+					return err
+				}
+
+				err = os.Chmod(agentInstallPath, 0o500)
+				if err != nil {
+					return err
+				}
+
+				err = os.Chown(agentInstallPath, 0, 0)
+				if err != nil {
+					return err
+				}
+
+				// Ensure we copy the source file's timestamps so they can be used for comparison later.
+				err = os.Chtimes(agentInstallPath, agentSrcInfo.ModTime(), agentSrcInfo.ModTime())
+				if err != nil {
+					return fmt.Errorf("Failed setting incus-agent timestamps: %w", err)
+				}
+			} else {
+				d.logger.Debug("Skipping incus-agent install as unchanged", logger.Ctx{"srcPath": agentSrcPath, "installPath": agentInstallPath})
+			}
+
+			// Legacy support.
+			_ = os.Remove(filepath.Join(configDrivePath, "lxd-agent"))
+			err = os.Symlink("incus-agent", filepath.Join(configDrivePath, "lxd-agent"))
+			if err != nil {
+				return err
 			}
 		} else {
-			d.logger.Debug("Skipping incus-agent install as unchanged", logger.Ctx{"srcPath": agentSrcPath, "installPath": agentInstallPath})
+			d.logger.Warn("incus-agent not found, skipping its inclusion in the VM config drive", logger.Ctx{"err": err})
 		}
-
-		// Legacy support.
-		_ = os.Remove(filepath.Join(configDrivePath, "lxd-agent"))
-		err = os.Symlink("incus-agent", filepath.Join(configDrivePath, "lxd-agent"))
-		if err != nil {
-			return err
-		}
-	} else {
-		d.logger.Warn("incus-agent not found, skipping its inclusion in the VM config drive", logger.Ctx{"err": err})
 	}
 
 	agentCert, agentKey, clientCert, _, err := d.generateAgentCert()
@@ -3084,63 +3148,65 @@ func (d *qemu) generateConfigShare() error {
 		return err
 	}
 
-	// Systemd units.
-	err = os.MkdirAll(filepath.Join(configDrivePath, "systemd"), 0o500)
-	if err != nil {
-		return err
-	}
+	if !isWindows {
+		// Systemd units.
+		err = os.MkdirAll(filepath.Join(configDrivePath, "systemd"), 0o500)
+		if err != nil {
+			return err
+		}
 
-	// Systemd unit for incus-agent. It ensures the incus-agent is copied from the shared filesystem before it is
-	// started. The service is triggered dynamically via udev rules when certain virtio-ports are detected,
-	// rather than being enabled at boot.
-	agentFile, err := incusAgentLoader.ReadFile("agent-loader/systemd/incus-agent.service")
-	if err != nil {
-		return err
-	}
+		// Systemd unit for incus-agent. It ensures the incus-agent is copied from the shared filesystem before it is
+		// started. The service is triggered dynamically via udev rules when certain virtio-ports are detected,
+		// rather than being enabled at boot.
+		agentFile, err := incusAgentLoader.ReadFile("agent-loader/systemd/incus-agent.service")
+		if err != nil {
+			return err
+		}
 
-	err = os.WriteFile(filepath.Join(configDrivePath, "systemd", "incus-agent.service"), agentFile, 0o400)
-	if err != nil {
-		return err
-	}
+		err = os.WriteFile(filepath.Join(configDrivePath, "systemd", "incus-agent.service"), agentFile, 0o400)
+		if err != nil {
+			return err
+		}
 
-	// Setup script for incus-agent that is executed by the incus-agent systemd unit before incus-agent is started.
-	// The script sets up a temporary mount point, copies data from the mount (including incus-agent binary),
-	// and then unmounts it. It also ensures appropriate permissions for the Incus agent's runtime directory.
-	agentFile, err = incusAgentLoader.ReadFile("agent-loader/incus-agent-setup")
-	if err != nil {
-		return err
-	}
+		// Setup script for incus-agent that is executed by the incus-agent systemd unit before incus-agent is started.
+		// The script sets up a temporary mount point, copies data from the mount (including incus-agent binary),
+		// and then unmounts it. It also ensures appropriate permissions for the Incus agent's runtime directory.
+		agentFile, err = incusAgentLoader.ReadFile("agent-loader/incus-agent-setup")
+		if err != nil {
+			return err
+		}
 
-	err = os.WriteFile(filepath.Join(configDrivePath, "systemd", "incus-agent-setup"), agentFile, 0o500)
-	if err != nil {
-		return err
-	}
+		err = os.WriteFile(filepath.Join(configDrivePath, "systemd", "incus-agent-setup"), agentFile, 0o500)
+		if err != nil {
+			return err
+		}
 
-	err = os.MkdirAll(filepath.Join(configDrivePath, "udev"), 0o500)
-	if err != nil {
-		return err
-	}
+		err = os.MkdirAll(filepath.Join(configDrivePath, "udev"), 0o500)
+		if err != nil {
+			return err
+		}
 
-	// Udev rules to start the incus-agent.service when QEMU serial devices (symlinks in virtio-ports) appear.
-	agentFile, err = incusAgentLoader.ReadFile("agent-loader/systemd/incus-agent.rules")
-	if err != nil {
-		return err
-	}
+		// Udev rules to start the incus-agent.service when QEMU serial devices (symlinks in virtio-ports) appear.
+		agentFile, err = incusAgentLoader.ReadFile("agent-loader/systemd/incus-agent.rules")
+		if err != nil {
+			return err
+		}
 
-	err = os.WriteFile(filepath.Join(configDrivePath, "udev", "99-incus-agent.rules"), agentFile, 0o400)
-	if err != nil {
-		return err
-	}
+		err = os.WriteFile(filepath.Join(configDrivePath, "udev", "99-incus-agent.rules"), agentFile, 0o400)
+		if err != nil {
+			return err
+		}
 
-	// Install script for manual installs.
-	agentFile, err = incusAgentLoader.ReadFile("agent-loader/install.sh")
-	if err != nil {
-		return err
-	}
+		// Install script for manual installs.
+		agentFile, err = incusAgentLoader.ReadFile("agent-loader/install.sh")
+		if err != nil {
+			return err
+		}
 
-	err = os.WriteFile(filepath.Join(configDrivePath, "install.sh"), agentFile, 0o700)
-	if err != nil {
-		return err
+		err = os.WriteFile(filepath.Join(configDrivePath, "install.sh"), agentFile, 0o700)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Templated files.
@@ -3185,45 +3251,47 @@ func (d *qemu) generateConfigShare() error {
 		}
 	}
 
-	// Clear NICConfigDir to ensure that no leftover configuration is erroneously applied by the agent.
-	nicConfigPath := filepath.Join(configDrivePath, deviceConfig.NICConfigDir)
-	_ = os.RemoveAll(nicConfigPath)
-	err = os.MkdirAll(nicConfigPath, 0o500)
-	if err != nil {
-		return err
-	}
+	if !isWindows {
+		// Clear NICConfigDir to ensure that no leftover configuration is erroneously applied by the agent.
+		nicConfigPath := filepath.Join(configDrivePath, deviceConfig.NICConfigDir)
+		_ = os.RemoveAll(nicConfigPath)
+		err = os.MkdirAll(nicConfigPath, 0o500)
+		if err != nil {
+			return err
+		}
 
-	// Add the NIC config.
-	if util.IsTrue(d.expandedConfig["agent.nic_config"]) {
-		sortedDevices := d.expandedDevices.Sorted()
-		for _, entry := range sortedDevices {
-			if entry.Config["type"] != "nic" {
-				continue // Only keep NIC devices.
+		// Add the NIC config.
+		if util.IsTrue(d.expandedConfig["agent.nic_config"]) {
+			sortedDevices := d.expandedDevices.Sorted()
+			for _, entry := range sortedDevices {
+				if entry.Config["type"] != "nic" {
+					continue // Only keep NIC devices.
+				}
+
+				dev, err := d.FillNetworkDevice(entry.Name, entry.Config)
+				if err != nil {
+					return err
+				}
+
+				err = d.writeNICDevConfig(dev["mtu"], entry.Name, dev["name"], dev["hwaddr"])
+				if err != nil {
+					return fmt.Errorf("Failed writing NIC config for device %q: %w", entry.Name, err)
+				}
 			}
+		}
 
-			dev, err := d.FillNetworkDevice(entry.Name, entry.Config)
+		// Writing the connection info the config drive allows the agent to start /dev/incus very
+		// early. This is important for systemd services which want or require /dev/incus/sock.
+		connInfo, err := d.getAgentConnectionInfo()
+		if err != nil {
+			return err
+		}
+
+		if connInfo != nil {
+			err = d.saveConnectionInfo(connInfo)
 			if err != nil {
 				return err
 			}
-
-			err = d.writeNICDevConfig(dev["mtu"], entry.Name, dev["name"], dev["hwaddr"])
-			if err != nil {
-				return fmt.Errorf("Failed writing NIC config for device %q: %w", entry.Name, err)
-			}
-		}
-	}
-
-	// Writing the connection info the config drive allows the agent to start /dev/incus very
-	// early. This is important for systemd services which want or require /dev/incus/sock.
-	connInfo, err := d.getAgentConnectionInfo()
-	if err != nil {
-		return err
-	}
-
-	if connInfo != nil {
-		err = d.saveConnectionInfo(connInfo)
-		if err != nil {
-			return err
 		}
 	}
 
@@ -3659,7 +3727,7 @@ func (d *qemu) generateQemuConfig(machineDefinition string, cpuInfo *cpuTopology
 		if sevOpts != nil {
 			for i := range conf {
 				if conf[i].Name == "machine" {
-					conf[i].Entries = append(conf[i].Entries, cfg.Entry{Key: "memory-encryption", Value: "sev0"})
+					conf[i].Entries["memory-encryption"] = "sev0"
 					break
 				}
 			}
@@ -3835,16 +3903,18 @@ func (d *qemu) generateQemuConfig(machineDefinition string, cpuInfo *cpuTopology
 		bus.allocate(busFunctionGroupNone)
 	}
 
-	// Write the agent mount config.
-	agentMountJSON, err := json.Marshal(agentMounts)
-	if err != nil {
-		return nil, fmt.Errorf("Failed marshalling agent mounts to JSON: %w", err)
-	}
+	if !d.isWindows() {
+		// Write the agent mount config.
+		agentMountJSON, err := json.Marshal(agentMounts)
+		if err != nil {
+			return nil, fmt.Errorf("Failed marshalling agent mounts to JSON: %w", err)
+		}
 
-	agentMountFile := filepath.Join(d.Path(), "config", "agent-mounts.json")
-	err = os.WriteFile(agentMountFile, agentMountJSON, 0o400)
-	if err != nil {
-		return nil, fmt.Errorf("Failed writing agent mounts file: %w", err)
+		agentMountFile := filepath.Join(d.Path(), "config", "agent-mounts.json")
+		err = os.WriteFile(agentMountFile, agentMountJSON, 0o400)
+		if err != nil {
+			return nil, fmt.Errorf("Failed writing agent mounts file: %w", err)
+		}
 	}
 
 	// process any user-specified overrides
@@ -3996,8 +4066,17 @@ func (d *qemu) addCPUMemoryConfig(conf *[]cfg.Section, cpuInfo *cpuTopology) err
 
 	cpuPinning := cpuInfo.vcpus != nil
 
+	maxMemoryBytes, err := linux.DeviceTotalMemory()
+	if err != nil {
+		return err
+	}
+
+	if maxMemoryBytes < memSizeBytes {
+		maxMemoryBytes = memSizeBytes
+	}
+
 	if conf != nil {
-		*conf = append(*conf, qemuMemory(&qemuMemoryOpts{memSizeBytes / 1024 / 1024})...)
+		*conf = append(*conf, qemuMemory(&qemuMemoryOpts{memSizeBytes / 1024 / 1024, maxMemoryBytes / 1024 / 1024})...)
 		*conf = append(*conf, qemuCPU(cpuOpts, cpuPinning)...)
 	}
 
@@ -4400,8 +4479,8 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 	}
 
 	monHook := func(m *qmp.Monitor) error {
-		revert := revert.New()
-		defer revert.Fail()
+		reverter := revert.New()
+		defer reverter.Fail()
 
 		nodeName := d.blockNodeName(escapedDeviceName)
 
@@ -4437,7 +4516,7 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 				return fmt.Errorf("Failed sending file descriptor of %q for disk device %q: %w", f.Name(), driveConf.DevName, err)
 			}
 
-			revert.Add(func() {
+			reverter.Add(func() {
 				_ = m.RemoveFDFromFDSet(nodeName)
 			})
 
@@ -4456,7 +4535,7 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 			}
 		}
 
-		revert.Success()
+		reverter.Success()
 		return nil
 	}
 
@@ -4612,6 +4691,7 @@ func (d *qemu) addNetDevConfig(busName string, qemuDev map[string]any, bootIndex
 			}
 
 			reverter.Success()
+
 			return nil
 		}
 	}
@@ -4638,15 +4718,15 @@ func (d *qemu) addNetDevConfig(busName string, qemuDev map[string]any, bootIndex
 		// Detect TAP interface and use IOCTL TUNSETIFF on /dev/net/tun to get the file handle to it.
 		// This is so we can open a file handle to the tap device and pass it to the qemu process.
 		devFile := func() (*os.File, error) {
-			revert := revert.New()
-			defer revert.Fail()
+			reverter := revert.New()
+			defer reverter.Fail()
 
 			f, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
 			if err != nil {
 				return nil, err
 			}
 
-			revert.Add(func() { _ = f.Close() })
+			reverter.Add(func() { _ = f.Close() })
 
 			ifr, err := unix.NewIfreq(nicName)
 			if err != nil {
@@ -4663,7 +4743,8 @@ func (d *qemu) addNetDevConfig(busName string, qemuDev map[string]any, bootIndex
 				return nil, fmt.Errorf("Error getting TAP file handle for %q: %w", nicName, err)
 			}
 
-			revert.Success()
+			reverter.Success()
+
 			return f, nil
 		}
 
@@ -4760,6 +4841,7 @@ func (d *qemu) addNetDevConfig(busName string, qemuDev map[string]any, bootIndex
 	}
 
 	reverter.Success()
+
 	return monHook, nil
 }
 
@@ -4944,8 +5026,8 @@ func (d *qemu) addUSBDeviceConfig(usbDev deviceConfig.USBDeviceItem) (monitorHoo
 	}
 
 	monHook := func(m *qmp.Monitor) error {
-		revert := revert.New()
-		defer revert.Fail()
+		reverter := revert.New()
+		defer reverter.Fail()
 
 		f, err := os.OpenFile(usbDev.HostDevicePath, unix.O_RDWR, 0)
 		if err != nil {
@@ -4959,7 +5041,7 @@ func (d *qemu) addUSBDeviceConfig(usbDev deviceConfig.USBDeviceItem) (monitorHoo
 			return fmt.Errorf("Failed to send file descriptor: %w", err)
 		}
 
-		revert.Add(func() {
+		reverter.Add(func() {
 			_ = m.RemoveFDFromFDSet(qemuDev["id"].(string))
 		})
 
@@ -4970,7 +5052,8 @@ func (d *qemu) addUSBDeviceConfig(usbDev deviceConfig.USBDeviceItem) (monitorHoo
 			return fmt.Errorf("Failed to add device: %w", err)
 		}
 
-		revert.Success()
+		reverter.Success()
+
 		return nil
 	}
 
@@ -5540,12 +5623,12 @@ func (d *qemu) Rename(newName string, applyTemplateTrigger bool) error {
 		}
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Set the new name in the struct.
 	d.name = newName
-	revert.Add(func() { d.name = oldName })
+	reverter.Add(func() { d.name = oldName })
 
 	// Rename the backups.
 	backups, err := d.Backups()
@@ -5564,7 +5647,7 @@ func (d *qemu) Rename(newName string, applyTemplateTrigger bool) error {
 			return err
 		}
 
-		revert.Add(func() { _ = b.Rename(oldName) })
+		reverter.Add(func() { _ = b.Rename(oldName) })
 	}
 
 	// Update lease files.
@@ -5600,7 +5683,8 @@ func (d *qemu) Rename(newName string, applyTemplateTrigger bool) error {
 		d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceRenamed.Event(d, map[string]any{"old_name": oldName}))
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -5615,8 +5699,8 @@ func (d *qemu) Update(args db.InstanceArgs, userRequested bool) error {
 	defer op.Done(nil)
 
 	// Setup the reverter.
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Set sane defaults for unset keys.
 	if args.Project == "" {
@@ -5733,7 +5817,7 @@ func (d *qemu) Update(args db.InstanceArgs, userRequested bool) error {
 	oldExpiryDate := d.expiryDate
 
 	// Revert local changes if update fails.
-	revert.Add(func() {
+	reverter.Add(func() {
 		d.description = oldDescription
 		d.architecture = oldArchitecture
 		d.ephemeral = oldEphemeral
@@ -6056,7 +6140,7 @@ func (d *qemu) Update(args db.InstanceArgs, userRequested bool) error {
 	}
 
 	// Changes have been applied and recorded, do not revert if an error occurs from here.
-	revert.Success()
+	reverter.Success()
 
 	if isRunning {
 		// Send devIncus notifications only for user.* key changes
@@ -6708,8 +6792,8 @@ func (d *qemu) Export(w io.Writer, properties map[string]string, expiration time
 		"qemu-img", "convert", "-p", "-f", "raw", "-O", "qcow2", "-c",
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Check for Direct I/O support.
 	from, err := os.OpenFile(mountInfo.DiskPath, unix.O_DIRECT|unix.O_RDONLY, 0)
@@ -6724,7 +6808,7 @@ func (d *qemu) Export(w io.Writer, properties map[string]string, expiration time
 		_ = to.Close()
 	}
 
-	revert.Add(func() { _ = os.Remove(fPath) })
+	reverter.Add(func() { _ = os.Remove(fPath) })
 
 	cmd = append(cmd, mountInfo.DiskPath, fPath)
 
@@ -6761,7 +6845,7 @@ func (d *qemu) Export(w io.Writer, properties map[string]string, expiration time
 		return nil, err
 	}
 
-	revert.Success()
+	reverter.Success()
 	d.logger.Info("Exported instance", ctxMap)
 	return &meta, nil
 }
@@ -7057,7 +7141,7 @@ func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName str
 	// then we can treat this as shared storage and avoid needing to sync the root disk.
 	sameSharedStorage := clusterMoveSourceName != "" && pool.Driver().Info().Remote && storagePool == ""
 
-	revert := revert.New()
+	reverter := revert.New()
 
 	// Non-shared storage snapshot setup.
 	if !sameSharedStorage {
@@ -7149,7 +7233,7 @@ func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName str
 			return fmt.Errorf("Failed taking temporary migration storage snapshot: %w", err)
 		}
 
-		revert.Add(func() {
+		reverter.Add(func() {
 			// Resume guest (this is needed as it will prevent merging the snapshot if paused).
 			err = monitor.Start()
 			if err != nil {
@@ -7163,7 +7247,7 @@ func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName str
 			}
 		})
 
-		defer revert.Fail() // Run the revert fail before the earlier defers.
+		defer reverter.Fail() // Run the revert fail before the earlier defers.
 
 		d.logger.Debug("Setup temporary migration storage snapshot")
 	} else {
@@ -7272,7 +7356,7 @@ func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName str
 			return fmt.Errorf("Failed adding NBD device: %w", err)
 		}
 
-		revert.Add(func() {
+		reverter.Add(func() {
 			time.Sleep(time.Second) // Wait for it to be released.
 			err := monitor.RemoveBlockDevice(nbdTargetDiskName)
 			if err != nil {
@@ -7291,7 +7375,7 @@ func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName str
 			return fmt.Errorf("Failed transferring migration storage snapshot: %w", err)
 		}
 
-		revert.Add(func() {
+		reverter.Add(func() {
 			err = monitor.BlockJobCancel(rootSnapshotDiskName)
 			if err != nil {
 				d.logger.Error("Failed cancelling block job", logger.Ctx{"err": err})
@@ -7391,7 +7475,8 @@ func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName str
 		d.logger.Debug("Merge migration storage snapshot on source finished")
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -7560,8 +7645,8 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		}
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	g, ctx := errgroup.WithContext(context.Background())
 
@@ -7716,7 +7801,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 						return fmt.Errorf("Failed creating instance snapshot record %q: %w", snapArgs.Name, err)
 					}
 
-					revert.Add(cleanup)
+					reverter.Add(cleanup)
 					defer snapInstOp.Done(err)
 				}
 			}
@@ -7769,7 +7854,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		// avoid deleting an existing conflicting volume.
 		isRemoteClusterMove := clusterMove && poolInfo.Remote
 		if !volTargetArgs.Refresh && !isRemoteClusterMove {
-			revert.Add(func() {
+			reverter.Add(func() {
 				snapshots, _ := d.Snapshots()
 				snapshotCount := len(snapshots)
 				for k := range snapshots {
@@ -7859,7 +7944,8 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		// not collect the error, as it will just be a disconnect error from the source.
 		_ = g.Wait()
 
-		revert.Success()
+		reverter.Success()
+
 		return nil
 	}
 }
@@ -8028,8 +8114,8 @@ func (d *qemu) Console(protocol string) (*os.File, chan error, error) {
 
 // Exec a command inside the instance.
 func (d *qemu) Exec(req api.InstanceExecPost, stdin *os.File, stdout *os.File, stderr *os.File) (instance.Cmd, error) {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	client, err := d.getAgentClient()
 	if err != nil {
@@ -8042,7 +8128,7 @@ func (d *qemu) Exec(req api.InstanceExecPost, stdin *os.File, stdout *os.File, s
 		return nil, fmt.Errorf("Failed to connect to the agent")
 	}
 
-	revert.Add(agent.Disconnect)
+	reverter.Add(agent.Disconnect)
 
 	dataDone := make(chan bool)
 	controlSendCh := make(chan api.InstanceExecControl)
@@ -8087,14 +8173,15 @@ func (d *qemu) Exec(req api.InstanceExecPost, stdin *os.File, stdout *os.File, s
 		cmd:              op,
 		attachedChildPid: 0, // Process is not running on the host.
 		dataDone:         args.DataDone,
-		cleanupFunc:      revert.Clone().Fail, // Pass revert function clone as clean up function.
+		cleanupFunc:      reverter.Clone().Fail, // Pass revert function clone as clean up function.
 		controlSendCh:    controlSendCh,
 		controlResCh:     controlResCh,
 	}
 
 	d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceExec.Event(d, logger.Ctx{"command": req.Command}))
 
-	revert.Success()
+	reverter.Success()
+
 	return instCmd, nil
 }
 
@@ -8272,7 +8359,9 @@ func (d *qemu) renderState(statusCode api.StatusCode) (*api.InstanceState, error
 				// Fallback data if agent is not reachable.
 				status = &api.InstanceState{}
 				status.Processes = -1
+			}
 
+			if len(status.Network) == 0 {
 				status.Network, err = d.getNetworkState()
 				if err != nil {
 					return nil, err
@@ -8532,15 +8621,15 @@ func (d *qemu) getVsockID() (uint32, error) {
 // acquireVsockID tries to occupy the given vsock Context ID.
 // If the ID is free it returns the corresponding file handle.
 func (d *qemu) acquireVsockID(vsockID uint32) (*os.File, error) {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	vsockF, err := os.OpenFile("/dev/vhost-vsock", os.O_RDWR, 0)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to open vhost socket: %w", err)
 	}
 
-	revert.Add(func() { _ = vsockF.Close() })
+	reverter.Add(func() { _ = vsockF.Close() })
 
 	// The vsock Context ID cannot be supplied as type uint32.
 	vsockIDInt := uint64(vsockID)
@@ -8556,7 +8645,8 @@ func (d *qemu) acquireVsockID(vsockID uint32) (*os.File, error) {
 		return nil, nil
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return vsockF, nil
 }
 
@@ -8664,7 +8754,7 @@ func (d *qemu) statusCode() api.StatusCode {
 
 	status, err := monitor.Status()
 	if err != nil {
-		if err == qmp.ErrMonitorDisconnect {
+		if errors.Is(err, qmp.ErrMonitorDisconnect) {
 			// If cannot connect to monitor, but qemu process in pid file still exists, then likely
 			// qemu is unresponsive and this instance is in an error state.
 			pid, _ := d.pid()
@@ -8937,7 +9027,7 @@ func (d *qemu) devIncusEventSend(eventType string, eventMessage map[string]any) 
 	client, err := d.getAgentClient()
 	if err != nil {
 		// Don't fail if the VM simply doesn't have an agent.
-		if err == errQemuAgentOffline {
+		if errors.Is(err, errQemuAgentOffline) {
 			return nil
 		}
 
@@ -9445,8 +9535,8 @@ func (d *qemu) setCPUs(monitor *qmp.Monitor, count int) error {
 		return nil
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// More CPUs requested.
 	if count > totalReservedCPUs {
@@ -9483,7 +9573,7 @@ func (d *qemu) setCPUs(monitor *qmp.Monitor, count int) error {
 				return fmt.Errorf("Failed to add device: %w", err)
 			}
 
-			revert.Add(func() {
+			reverter.Add(func() {
 				err := monitor.RemoveDevice(devID)
 				d.logger.Warn("Failed to remove CPU device", logger.Ctx{"err": err})
 			})
@@ -9506,7 +9596,7 @@ func (d *qemu) setCPUs(monitor *qmp.Monitor, count int) error {
 				return fmt.Errorf("Failed to remove CPU: %w", err)
 			}
 
-			revert.Add(func() {
+			reverter.Add(func() {
 				err := monitor.AddDevice(map[string]any{
 					"id":        devID,
 					"driver":    cpu.Type,
@@ -9523,7 +9613,7 @@ func (d *qemu) setCPUs(monitor *qmp.Monitor, count int) error {
 		time.Sleep(time.Second)
 	}
 
-	revert.Success()
+	reverter.Success()
 
 	// Run post-hotplug tasks.
 	err = d.postCPUHotplug(monitor)

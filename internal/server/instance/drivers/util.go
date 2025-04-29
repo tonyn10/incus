@@ -17,6 +17,7 @@ import (
 	"github.com/lxc/incus/v6/internal/server/instance/drivers/cfg"
 	"github.com/lxc/incus/v6/internal/server/instance/drivers/qmp"
 	"github.com/lxc/incus/v6/internal/server/instance/instancetype"
+	"github.com/lxc/incus/v6/internal/server/resources"
 	"github.com/lxc/incus/v6/internal/server/state"
 	internalUtil "github.com/lxc/incus/v6/internal/util"
 	"github.com/lxc/incus/v6/shared/api"
@@ -46,22 +47,31 @@ func GetClusterCPUFlags(ctx context.Context, s *state.State, servers []string, a
 			continue
 		}
 
-		// Attempt to load the cached resources.
-		resourcesPath := internalUtil.CachePath("resources", fmt.Sprintf("%s.yaml", node.Name))
+		var res *api.Resources
+		if node.Name == s.ServerName {
+			// Get our own local data.
+			res, err = resources.GetResources()
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			// Attempt to load the cached resources.
+			resourcesPath := internalUtil.CachePath("resources", fmt.Sprintf("%s.yaml", node.Name))
 
-		data, err := os.ReadFile(resourcesPath)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
+			data, err := os.ReadFile(resourcesPath)
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					continue
+				}
+
+				return nil, err
 			}
 
-			return nil, err
-		}
-
-		res := api.Resources{}
-		err = yaml.Unmarshal(data, &res)
-		if err != nil {
-			return nil, err
+			res = &api.Resources{}
+			err = yaml.Unmarshal(data, res)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Skip if not the correct architecture.
@@ -149,31 +159,31 @@ func memoryConfigSectionToMap(section *cfg.Section) map[string]any {
 	obj := map[string]any{}
 	hostNodes := []int{}
 
-	for _, entry := range section.Entries {
-		if strings.HasPrefix(entry.Key, "host-nodes") {
-			hostNode, err := strconv.Atoi(entry.Value)
+	for key, value := range section.Entries {
+		if strings.HasPrefix(key, "host-nodes") {
+			hostNode, err := strconv.Atoi(value)
 			if err != nil {
 				continue
 			}
 
 			hostNodes = append(hostNodes, hostNode)
-		} else if entry.Key == "size" {
+		} else if key == "size" {
 			// Size in the config is specified in the format: 1024M, so the last character needs to be removed before parsing.
-			memSizeMB, err := strconv.Atoi(entry.Value[:len(entry.Value)-1])
+			memSizeMB, err := strconv.Atoi(value[:len(value)-1])
 			if err != nil {
 				continue
 			}
 
 			obj["size"] = roundDownToBlockSize(int64(memSizeMB)*1024*1024, blockSize)
-		} else if entry.Key == "merge" || entry.Key == "dump" || entry.Key == "prealloc" || entry.Key == "share" || entry.Key == "reserve" {
+		} else if key == "merge" || key == "dump" || key == "prealloc" || key == "share" || key == "reserve" {
 			val := false
-			if entry.Value == "on" {
+			if value == "on" {
 				val = true
 			}
 
-			obj[entry.Key] = val
+			obj[key] = val
 		} else {
-			obj[entry.Key] = entry.Value
+			obj[key] = value
 		}
 	}
 

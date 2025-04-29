@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,7 +38,7 @@ func (d *tpm) validateConfig(instConf instance.ConfigReader) error {
 	rules := map[string]func(string) error{}
 
 	if instConf.Type() == instancetype.Container {
-		// gendoc:generate(entity=tpm, group=common, key=path)
+		// gendoc:generate(entity=devices, group=tpm, key=path)
 		//
 		// ---
 		//  type: string
@@ -46,7 +47,7 @@ func (d *tpm) validateConfig(instConf instance.ConfigReader) error {
 		//  shortdesc: Only for containers: path inside the instance (for example, `/dev/tpm0`)
 		rules["path"] = validate.IsNotEmpty
 
-		// gendoc:generate(entity=tpm, group=common, key=pathrm)
+		// gendoc:generate(entity=devices, group=tpm, key=pathrm)
 		//
 		// ---
 		//  type: string
@@ -127,11 +128,11 @@ func (d *tpm) startContainer() (*deviceConfig.RunConfig, error) {
 		return nil, fmt.Errorf("Failed to start process %q: %w", "swtpm", err)
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Stop the TPM emulator if anything goes wrong.
-	revert.Add(func() { _ = proc.Stop() })
+	reverter.Add(func() { _ = proc.Stop() })
 
 	pidPath := filepath.Join(d.inst.DevicesPath(), fmt.Sprintf("%s.pid", d.name))
 
@@ -202,7 +203,7 @@ func (d *tpm) startContainer() (*deviceConfig.RunConfig, error) {
 		return nil, fmt.Errorf("Failed to setup unix device: %w", err)
 	}
 
-	revert.Success()
+	reverter.Success()
 
 	return &runConf, nil
 }
@@ -233,10 +234,10 @@ func (d *tpm) startVM() (*deviceConfig.RunConfig, error) {
 		return nil, fmt.Errorf("Failed to start swtpm for device %q: %w", d.name, err)
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
-	revert.Add(func() { _ = proc.Stop() })
+	reverter.Add(func() { _ = proc.Stop() })
 
 	pidPath := filepath.Join(d.inst.DevicesPath(), fmt.Sprintf("%s.pid", d.name))
 
@@ -260,7 +261,7 @@ func (d *tpm) startVM() (*deviceConfig.RunConfig, error) {
 		return nil, fmt.Errorf("swtpm socket didn't appear within 2s")
 	}
 
-	revert.Success()
+	reverter.Success()
 
 	return &runConf, nil
 }
@@ -282,7 +283,7 @@ func (d *tpm) Stop() (*deviceConfig.RunConfig, error) {
 		// i.e. the instance is stopped. Therefore, we only fail if the running process couldn't
 		// be stopped.
 		err = proc.Stop()
-		if err != nil && err != subprocess.ErrNotRunning {
+		if err != nil && !errors.Is(err, subprocess.ErrNotRunning) {
 			return nil, fmt.Errorf("Failed to stop imported process %q: %w", pidPath, err)
 		}
 	}

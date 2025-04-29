@@ -377,6 +377,47 @@ For file systems (shared directories or custom volumes), this is one of:
 ```
 
 <!-- config group devices-gpu_sriov end -->
+<!-- config group devices-infiniband start -->
+```{config:option} hwaddr devices-infiniband
+:defaultdesc: "randomly assigned"
+:required: "no"
+:shortdesc: "The MAC address of the new interface (can be either the full 20-byte variant or the short 8-byte variant, which will only modify the last 8 bytes of the parent device)"
+:type: "string"
+
+```
+
+```{config:option} mtu devices-infiniband
+:defaultdesc: "parent MTU"
+:required: "no"
+:shortdesc: "The MTU of the new interface"
+:type: "integer"
+
+```
+
+```{config:option} name devices-infiniband
+:defaultdesc: "kernel assigned"
+:required: "no"
+:shortdesc: "The name of the interface inside the instance"
+:type: "string"
+
+```
+
+```{config:option} nictype devices-infiniband
+:required: "yes"
+:shortdesc: "The device type (one of `physical` or `sriov`)"
+:type: "string"
+
+```
+
+```{config:option} parent devices-infiniband
+:defaultdesc: "kernel assigned"
+:required: "no"
+:shortdesc: "The name of the interface inside the instance"
+:type: "string"
+
+```
+
+<!-- config group devices-infiniband end -->
 <!-- config group devices-nic_bridged start -->
 ```{config:option} boot.priority devices-nic_bridged
 :managed: "no"
@@ -1305,6 +1346,15 @@ For file systems (shared directories or custom volumes), this is one of:
 ```
 
 <!-- config group devices-nic_sriov end -->
+<!-- config group devices-pci start -->
+```{config:option} address devices-pci
+:required: "yes"
+:shortdesc: "PCI address of the device"
+:type: "string"
+
+```
+
+<!-- config group devices-pci end -->
 <!-- config group devices-proxy start -->
 ```{config:option} bind devices-proxy
 :default: "`host`"
@@ -1385,6 +1435,24 @@ For file systems (shared directories or custom volumes), this is one of:
 ```
 
 <!-- config group devices-proxy end -->
+<!-- config group devices-tpm start -->
+```{config:option} path devices-tpm
+:default: "-"
+:required: "for containers"
+:shortdesc: "Only for containers: path inside the instance (for example, `/dev/tpm0`)"
+:type: "string"
+
+```
+
+```{config:option} pathrm devices-tpm
+:default: "-"
+:required: "for containers"
+:shortdesc: "Only for containers: resource manager path inside the instance (for example, `/dev/tpmrm0`)"
+:type: "string"
+
+```
+
+<!-- config group devices-tpm end -->
 <!-- config group devices-unix-char-block start -->
 ```{config:option} gid devices-unix-char-block
 :default: "0"
@@ -1575,47 +1643,6 @@ For file systems (shared directories or custom volumes), this is one of:
 ```
 
 <!-- config group image-requirements end -->
-<!-- config group infiniband-common start -->
-```{config:option} hwaddr infiniband-common
-:defaultdesc: "randomly assigned"
-:required: "no"
-:shortdesc: "The MAC address of the new interface (can be either the full 20-byte variant or the short 8-byte variant, which will only modify the last 8 bytes of the parent device)"
-:type: "string"
-
-```
-
-```{config:option} mtu infiniband-common
-:defaultdesc: "parent MTU"
-:required: "no"
-:shortdesc: "The MTU of the new interface"
-:type: "integer"
-
-```
-
-```{config:option} name infiniband-common
-:defaultdesc: "kernel assigned"
-:required: "no"
-:shortdesc: "The name of the interface inside the instance"
-:type: "string"
-
-```
-
-```{config:option} nictype infiniband-common
-:required: "yes"
-:shortdesc: "The device type (one of `physical` or `sriov`)"
-:type: "string"
-
-```
-
-```{config:option} parent infiniband-common
-:defaultdesc: "kernel assigned"
-:required: "no"
-:shortdesc: "The name of the interface inside the instance"
-:type: "string"
-
-```
-
-<!-- config group infiniband-common end -->
 <!-- config group instance-boot start -->
 ```{config:option} boot.autorestart instance-boot
 :liveupdate: "no"
@@ -2814,6 +2841,40 @@ User keys can be used in search.
 ```
 
 <!-- config group network_address_set-common end -->
+<!-- config group network_bridge-bgp start -->
+```{config:option} bgp.peers.NAME.address network_bridge-bgp
+:condition: "BGP server"
+:defaultdesc: "-"
+:shortdesc: "Peer address (IPv4 or IPv6) for use by `ovn` downstream networks"
+:type: "string"
+
+```
+
+```{config:option} bgp.peers.NAME.asn network_bridge-bgp
+:condition: "BGP server"
+:defaultdesc: "-"
+:shortdesc: "Peer AS number for use by `ovn` downstream networks"
+:type: "integer"
+
+```
+
+```{config:option} bgp.peers.NAME.holdtime network_bridge-bgp
+:condition: "BGP server"
+:defaultdesc: "`180`"
+:shortdesc: "Peer session hold time (in seconds; optional)"
+:type: "integer"
+
+```
+
+```{config:option} bgp.peers.NAME.password network_bridge-bgp
+:condition: "BGP server"
+:defaultdesc: "- (no password)"
+:shortdesc: "Peer session password (optional) for use by `ovn` downstream networks"
+:type: "string"
+
+```
+
+<!-- config group network_bridge-bgp end -->
 <!-- config group network_bridge-common start -->
 ```{config:option} bgp.ipv4.nexthop network_bridge-common
 :condition: "BGP server"
@@ -2945,7 +3006,7 @@ User keys can be used in search.
 
 ```{config:option} ipv4.dhcp.gateway network_bridge-common
 :condition: "IPv4 DHCP"
-:default: "all addresses"
+:default: "IPv4 address"
 :shortdesc: "Address of the gateway for the subnet"
 :type: "string"
 
@@ -3104,7 +3165,7 @@ User keys can be used in search.
 ```
 
 ```{config:option} ipv6.routes network_bridge-common
-:condition: "IPv6"
+:condition: "IPv6 address"
 :default: "-"
 :shortdesc: "Comma-separated list of additional IPv6 CIDR subnets to route to the bridge"
 :type: "string"
@@ -3353,6 +3414,370 @@ User keys can be used in search.
 ```
 
 <!-- config group network_load_balancer-common end -->
+<!-- config group network_ovn-common start -->
+```{config:option} bridge.external_interfaces network_ovn-common
+:shortdesc: "Comma-separated list of unconfigured network interfaces to include in the bridge"
+:type: "string"
+
+```
+
+```{config:option} bridge.hwaddr network_ovn-common
+:shortdesc: "MAC address for the virtual bridge interface"
+:type: "string"
+
+```
+
+```{config:option} bridge.mtu network_ovn-common
+:default: "`1442`"
+:shortdesc: "Bridge MTU (default allows host to host Geneve tunnels)"
+:type: "integer"
+
+```
+
+```{config:option} dns.domain network_ovn-common
+:default: "`incus`"
+:shortdesc: "Domain to advertise to DHCP clients and use for DNS resolution"
+:type: "string"
+
+```
+
+```{config:option} dns.nameservers network_ovn-common
+:default: "Uplink DNS servers (IPv4 and IPv6 address if no uplink is configured)"
+:shortdesc: "DNS server IPs to advertise to DHCP clients and via Router Advertisements. Both IPv4 and IPv6 addresses get pushed via DHCP, and the first IPv6 address is also advertised as RDNSS via RA."
+:type: "string"
+
+```
+
+```{config:option} dns.search network_ovn-common
+:shortdesc: "Full comma-separated domain search list, defaulting to `dns.domain` value"
+:type: "string"
+
+```
+
+```{config:option} dns.zone.forward network_ovn-common
+:shortdesc: "Comma-separated list of DNS zone names for forward DNS records"
+:type: "string"
+
+```
+
+```{config:option} dns.zone.reverse.ipv4 network_ovn-common
+:shortdesc: "DNS zone name for IPv4 reverse DNS records"
+:type: "string"
+
+```
+
+```{config:option} dns.zone.reverse.ipv6 network_ovn-common
+:shortdesc: "DNS zone name for IPv6 reverse DNS records"
+:type: "string"
+
+```
+
+```{config:option} ipv4.address network_ovn-common
+:condition: "standard mode"
+:default: "(initial value on creation: `auto`)"
+:shortdesc: "IPv4 address for the bridge (use `none` to turn off IPv4 or `auto` to generate a new random unused subnet) (CIDR)"
+:type: "string"
+
+```
+
+```{config:option} ipv4.dhcp network_ovn-common
+:condition: "IPv4 address"
+:default: "`true`"
+:shortdesc: "Whether to allocate addresses using DHCP"
+:type: "bool"
+
+```
+
+```{config:option} ipv4.dhcp.expiry network_ovn-common
+:condition: "IPv4 DHCP"
+:default: "`1h`"
+:shortdesc: "When to expire DHCP leases"
+:type: "string"
+
+```
+
+```{config:option} ipv4.dhcp.ranges network_ovn-common
+:condition: "IPv4 DHCP"
+:default: "all addresses"
+:shortdesc: "Comma-separated list of IP ranges to use for DHCP (FIRST-LAST format)"
+:type: "string"
+
+```
+
+```{config:option} ipv4.dhcp.routes network_ovn-common
+:condition: "IPv4 DHCP"
+:shortdesc: "Static routes to provide via DHCP option 121, as a comma-separated list of alternating subnets (CIDR) and gateway addresses (same syntax as dnsmasq and OVN)"
+:type: "string"
+
+```
+
+```{config:option} ipv4.l3only network_ovn-common
+:condition: "IPv4 address"
+:default: "`false`"
+:shortdesc: "Whether to enable layer 3 only mode."
+:type: "bool"
+
+```
+
+```{config:option} ipv4.nat network_ovn-common
+:condition: "IPv4 address"
+:default: "`false` initial value on creation if `ipv4.address` is set to `auto: true`)"
+:shortdesc: "Whether to NAT"
+:type: "bool"
+
+```
+
+```{config:option} ipv4.nat.address network_ovn-common
+:condition: "IPv4 address"
+:shortdesc: "The source address used for outbound traffic from the network (requires uplink `ovn.ingress_mode=routed`)"
+:type: "string"
+
+```
+
+```{config:option} ipv6.address network_ovn-common
+:condition: "standard mode"
+:default: "(initial value on creation: `auto`)"
+:shortdesc: "IPv6 address for the bridge (use `none` to turn off IPv6 or `auto` to generate a new random unused subnet) (CIDR)"
+:type: "string"
+
+```
+
+```{config:option} ipv6.dhcp network_ovn-common
+:condition: "IPv6 address"
+:default: "`true`"
+:shortdesc: "Whether to provide additional network configuration over DHCP"
+:type: "bool"
+
+```
+
+```{config:option} ipv6.dhcp.stateful network_ovn-common
+:condition: "IPv6 DHCP"
+:default: "`false`"
+:shortdesc: "Whether to allocate addresses using DHCP"
+:type: "bool"
+
+```
+
+```{config:option} ipv6.l3only network_ovn-common
+:condition: "IPv6 DHCP stateful"
+:default: "`false`"
+:shortdesc: "Whether to enable layer 3 only mode."
+:type: "bool"
+
+```
+
+```{config:option} ipv6.nat network_ovn-common
+:condition: "IPv6 address"
+:default: "`false` (initial value on creation if `ipv6.address` is set to `auto: true`)"
+:shortdesc: "Whether to NAT"
+:type: "bool"
+
+```
+
+```{config:option} ipv6.nat.address network_ovn-common
+:condition: "IPv6 address"
+:shortdesc: "The source address used for outbound traffic from the network (requires uplink `ovn.ingress_mode=routed`)"
+:type: "string"
+
+```
+
+```{config:option} network network_ovn-common
+:shortdesc: "Uplink network to use for external network access or `none` to keep isolated"
+:type: "string"
+
+```
+
+```{config:option} security.acls network_ovn-common
+:shortdesc: "Comma-separated list of Network ACLs to apply to NICs connected to this network"
+:type: "string"
+
+```
+
+```{config:option} security.acls.default.egress.action network_ovn-common
+:condition: "`security.acls`"
+:default: "`reject`"
+:shortdesc: "Action to use for egress traffic that doesn't match any ACL rule"
+:type: "string"
+
+```
+
+```{config:option} security.acls.default.egress.logged network_ovn-common
+:condition: "`security.acls`"
+:default: "`false`"
+:shortdesc: "Whether to log egress traffic that doesn't match any ACL rule"
+:type: "bool"
+
+```
+
+```{config:option} security.acls.default.ingress.action network_ovn-common
+:condition: "`security.acls`"
+:default: "`reject`"
+:shortdesc: "Action to use for ingress traffic that doesn't match any ACL rule"
+:type: "string"
+
+```
+
+```{config:option} security.acls.default.ingress.logged network_ovn-common
+:condition: "`security.acls`"
+:default: "`false`"
+:shortdesc: "Whether to log ingress traffic that doesn't match any ACL rule"
+:type: "bool"
+
+```
+
+```{config:option} user.* network_ovn-common
+:shortdesc: "User-provided free-form key/value pairs"
+:type: "string"
+
+```
+
+<!-- config group network_ovn-common end -->
+<!-- config group network_physical-bgp start -->
+```{config:option} bgp.peers.NAME.address network_physical-bgp
+:condition: "BGP server"
+:defaultdesc: "-"
+:shortdesc: "Peer address (IPv4 or IPv6) for use by `ovn` downstream networks"
+:type: "string"
+
+```
+
+```{config:option} bgp.peers.NAME.asn network_physical-bgp
+:condition: "BGP server"
+:defaultdesc: "-"
+:shortdesc: "Peer AS number for use by `ovn` downstream networks"
+:type: "integer"
+
+```
+
+```{config:option} bgp.peers.NAME.holdtime network_physical-bgp
+:condition: "BGP server"
+:defaultdesc: "`180`"
+:shortdesc: "Peer session hold time (in seconds; optional)"
+:type: "integer"
+
+```
+
+```{config:option} bgp.peers.NAME.password network_physical-bgp
+:condition: "BGP server"
+:defaultdesc: "- (no password)"
+:shortdesc: "Peer session password (optional) for use by `ovn` downstream networks"
+:type: "string"
+
+```
+
+<!-- config group network_physical-bgp end -->
+<!-- config group network_physical-common start -->
+```{config:option} gvrp network_physical-common
+:condition: "-"
+:defaultdesc: "'false'"
+:shortdesc: "Register VLAN using GARP VLAN Registration Protocol"
+:type: "bool"
+
+```
+
+```{config:option} mtu network_physical-common
+:condition: "-"
+:shortdesc: "The MTU of the new interface"
+:type: "integer"
+
+```
+
+```{config:option} parent network_physical-common
+:condition: "-"
+:shortdesc: "Existing interface to use for network"
+:type: "string"
+
+```
+
+```{config:option} vlan network_physical-common
+:condition: "-"
+:shortdesc: "The VLAN ID to attach to"
+:type: "integer"
+
+```
+
+<!-- config group network_physical-common end -->
+<!-- config group network_physical-dns start -->
+```{config:option} dns.nameservers network_physical-dns
+:condition: "standard mode"
+:shortdesc: "List of DNS server IPs on `physical` network"
+:type: "string"
+
+```
+
+<!-- config group network_physical-dns end -->
+<!-- config group network_physical-ipv4 start -->
+```{config:option} ipv4.gateway network_physical-ipv4
+:condition: "standard mode"
+:shortdesc: "IPv4 address for the gateway and network (CIDR)"
+:type: "string"
+
+```
+
+```{config:option} ipv4.ovn.ranges network_physical-ipv4
+:condition: "-"
+:shortdesc: "Comma-separated list of IPv4 ranges to use for child OVN network routers (FIRST-LAST format)"
+:type: "string"
+
+```
+
+```{config:option} ipv4.routes network_physical-ipv4
+:condition: "IPv4 address"
+:shortdesc: "Comma-separated list of additional IPv4 CIDR subnets that can be used with child OVN networks `ipv4.routes.external` setting"
+:type: "string"
+
+```
+
+```{config:option} ipv4.routes.anycast network_physical-ipv4
+:condition: "IPv4 address"
+:defaultdesc: "'false'"
+:shortdesc: "Allow the overlapping routes to be used on multiple networks/NIC at the same time"
+:type: "bool"
+
+```
+
+<!-- config group network_physical-ipv4 end -->
+<!-- config group network_physical-ipv6 start -->
+```{config:option} ipv6.gateway network_physical-ipv6
+:condition: "standard mode"
+:shortdesc: "IPv6 address for the gateway and network (CIDR)"
+:type: "string"
+
+```
+
+```{config:option} ipv6.ovn.ranges network_physical-ipv6
+:condition: "-"
+:shortdesc: "Comma-separated list of IPv6 ranges to use for child OVN network routers (FIRST-LAST format)"
+:type: "string"
+
+```
+
+```{config:option} ipv6.routes network_physical-ipv6
+:condition: "IPv6 address"
+:shortdesc: "Comma-separated list of additional IPv6 CIDR subnets that can be used with child OVN networks `ipv6.routes.external` setting"
+:type: "string"
+
+```
+
+```{config:option} ipv6.routes.anycast network_physical-ipv6
+:condition: "IPv6 address"
+:defaultdesc: "'false'"
+:shortdesc: "Allow the overlapping routes to be used on multiple networks/NIC at the same time"
+:type: "bool"
+
+```
+
+<!-- config group network_physical-ipv6 end -->
+<!-- config group network_physical-ovn start -->
+```{config:option} ovn.ingress_mode network_physical-ovn
+:condition: "standard mode"
+:defaultdesc: "`l2proxy`"
+:shortdesc: "Sets the method how OVN NIC external IPs will be advertised on uplink network: `l2proxy` (proxy ARP/NDP) or `routed`"
+:type: "string"
+
+```
+
+<!-- config group network_physical-ovn end -->
 <!-- config group network_zone-common start -->
 ```{config:option} dns.nameservers network_zone-common
 :required: "no"
@@ -4492,21 +4917,3 @@ This value is required by some providers.
 ```
 
 <!-- config group server-openfga end -->
-<!-- config group tpm-common start -->
-```{config:option} path tpm-common
-:default: "-"
-:required: "for containers"
-:shortdesc: "Only for containers: path inside the instance (for example, `/dev/tpm0`)"
-:type: "string"
-
-```
-
-```{config:option} pathrm tpm-common
-:default: "-"
-:required: "for containers"
-:shortdesc: "Only for containers: resource manager path inside the instance (for example, `/dev/tpmrm0`)"
-:type: "string"
-
-```
-
-<!-- config group tpm-common end -->

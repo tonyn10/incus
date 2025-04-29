@@ -504,7 +504,7 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 	resources := map[string][]api.URL{}
 	resources["instances"] = []api.URL{*api.NewURL().Path(version.APIVersion, "instances", name)}
 	run := func(op *operations.Operation) error {
-		return ws.Do(s, op)
+		return ws.do(op)
 	}
 
 	cancel := func(op *operations.Operation) error {
@@ -568,10 +568,6 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 		})
 		if err != nil {
 			return fmt.Errorf("Failed to relink instance database data: %w", err)
-		}
-
-		if err != nil {
-			return fmt.Errorf("Failed creating mount point of instance on target node: %w", err)
 		}
 
 		// Import the instance into the storage.
@@ -834,9 +830,7 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 		}
 
 		target = target.UseProject(inst.Project().Name)
-		if targetMemberInfo != nil {
-			target = target.UseTarget(targetMemberInfo.Name)
-		}
+		target = target.UseTarget(targetMemberInfo.Name)
 
 		// Get the source member info if missing.
 		if sourceMemberInfo == nil {
@@ -868,7 +862,7 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 		}
 
 		run := func(op *operations.Operation) error {
-			return sourceMigration.Do(s, op)
+			return sourceMigration.do(op)
 		}
 
 		cancel := func(op *operations.Operation) error {

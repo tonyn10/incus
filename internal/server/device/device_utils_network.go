@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -316,8 +317,8 @@ func networkCreateTap(hostName string, m deviceConfig.Device) (uint32, error) {
 		return 0, fmt.Errorf("Failed to create the tap interfaces %q: %w", hostName, err)
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	link := &ip.Link{Name: hostName}
 	err = link.SetUp()
@@ -325,7 +326,7 @@ func networkCreateTap(hostName string, m deviceConfig.Device) (uint32, error) {
 		return 0, fmt.Errorf("Failed to bring up the tap interface %q: %w", hostName, err)
 	}
 
-	revert.Add(func() { _ = network.InterfaceRemove(hostName) })
+	reverter.Add(func() { _ = network.InterfaceRemove(hostName) })
 
 	// Set the MTU on both ends.
 	// The host side should always line up with the bridge to avoid accidentally lowering the bridge MTU.
@@ -386,7 +387,8 @@ func networkCreateTap(hostName string, m deviceConfig.Device) (uint32, error) {
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return mtu, nil
 }
 
@@ -409,8 +411,8 @@ func networkNICRouteAdd(routeDev string, routes ...string) error {
 		return fmt.Errorf("Route interface missing %q", routeDev)
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	for _, r := range routes {
 		route := r // Local var for revert.
@@ -437,7 +439,7 @@ func networkNICRouteAdd(routeDev string, routes ...string) error {
 			return err
 		}
 
-		revert.Add(func() {
+		reverter.Add(func() {
 			r := &ip.Route{
 				DevName: routeDev,
 				Route:   route,
@@ -449,7 +451,8 @@ func networkNICRouteAdd(routeDev string, routes ...string) error {
 		})
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -584,7 +587,7 @@ func networkSetupHostVethLimits(d *deviceCommon, oldConfig deviceConfig.Device, 
 		}
 	}
 
-	if oldConfig == nil || (oldConfig != nil && oldConfig["limits.priority"] != d.config["limits.priority"]) {
+	if oldConfig == nil || oldConfig["limits.priority"] != d.config["limits.priority"] {
 		if networkPriority != 0 {
 			if bridged && d.state.Firewall.String() == "xtables" {
 				return fmt.Errorf("Failed to setup instance device network priority. The xtables firewall driver does not support required functionality.")
@@ -712,8 +715,8 @@ func networkSRIOVSetupVF(d deviceCommon, vfParent string, vfDevice string, vfID 
 		return vfPCIDev, 0, err
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Record properties of VF settings on the parent device.
 	volatile["last_state.vf.parent"] = vfParent
@@ -744,7 +747,7 @@ func networkSRIOVSetupVF(d deviceCommon, vfParent string, vfDevice string, vfID 
 		return vfPCIDev, 0, err
 	}
 
-	revert.Add(func() { _ = pcidev.DeviceProbe(vfPCIDev) })
+	reverter.Add(func() { _ = pcidev.DeviceProbe(vfPCIDev) })
 
 	// Setup VF VLAN if specified.
 	if d.config["vlan"] != "" {
@@ -844,7 +847,8 @@ func networkSRIOVSetupVF(d deviceCommon, vfParent string, vfDevice string, vfID 
 		volatile["last_state.pci.driver"] = vfPCIDev.Driver
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return vfPCIDev, pciIOMMUGroup, nil
 }
 
@@ -863,8 +867,8 @@ func networkSRIOVRestoreVF(d deviceCommon, useSpoofCheck bool, volatile map[stri
 		return nil
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Get VF device's PCI info so we can unbind and rebind it from the host.
 	vfPCIDev, err := network.SRIOVGetVFDevicePCISlot(parent, volatile["last_state.vf.id"])
@@ -889,7 +893,7 @@ func networkSRIOVRestoreVF(d deviceCommon, useSpoofCheck bool, volatile map[stri
 
 	// However we return from this function, we must try to rebind the VF so its not orphaned.
 	// The OS won't let an already bound device be bound again so is safe to call twice.
-	revert.Add(func() { _ = pcidev.DeviceProbe(vfPCIDev) })
+	reverter.Add(func() { _ = pcidev.DeviceProbe(vfPCIDev) })
 
 	// Reset VF VLAN if specified
 	if volatile["last_state.vf.vlan"] != "" {
@@ -936,7 +940,8 @@ func networkSRIOVRestoreVF(d deviceCommon, useSpoofCheck bool, volatile map[stri
 		return err
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -1073,8 +1078,8 @@ func isIPAvailable(ctx context.Context, address net.IP, parentInterface string) 
 	if address.To4() != nil {
 		err := pingOverIfaceByName(deadline, address, parentInterface)
 		if err != nil {
-			ne, ok := err.(net.Error)
-			if ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				return false, nil
 			}
 
@@ -1120,8 +1125,8 @@ func isIPAvailable(ctx context.Context, address net.IP, parentInterface string) 
 	_ = conn.SetDeadline(deadline)
 	msg, _, _, err := conn.ReadFrom()
 	if err != nil {
-		cause, ok := err.(net.Error)
-		if ok && cause.Timeout() {
+		var cause net.Error
+		if errors.As(err, &cause) && cause.Timeout() {
 			return false, nil
 		}
 

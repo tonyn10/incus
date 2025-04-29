@@ -648,8 +648,8 @@ func (d *Daemon) createCmd(restAPI *mux.Router, version string, c APIEndpoint) {
 		// Authentication
 		trusted, username, protocol, err := d.Authenticate(w, r)
 		if err != nil {
-			_, ok := err.(*oidc.AuthError)
-			if ok {
+			var authError *oidc.AuthError
+			if errors.As(err, &authError) {
 				// Ensure the OIDC headers are set if needed.
 				if d.oidcVerifier != nil {
 					_ = d.oidcVerifier.WriteHeaders(w)
@@ -747,7 +747,7 @@ func (d *Daemon) createCmd(restAPI *mux.Router, version string, c APIEndpoint) {
 			return false
 		}
 
-		if d.shutdownCtx.Err() == context.Canceled && !allowedDuringShutdown() {
+		if errors.Is(d.shutdownCtx.Err(), context.Canceled) && !allowedDuringShutdown() {
 			_ = response.Unavailable(fmt.Errorf("Shutting down")).Render(w)
 			return
 		}
@@ -1360,7 +1360,7 @@ func (d *Daemon) init() error {
 
 	// Mount the storage pools.
 	logger.Infof("Initializing storage pools")
-	err = storageStartup(d.State(), false)
+	err = storageStartup(d.State())
 	if err != nil {
 		return err
 	}
@@ -1830,7 +1830,7 @@ func (d *Daemon) Stop(ctx context.Context, sig os.Signal) error {
 
 		// Full shutdown requested.
 		if sig == unix.SIGPWR {
-			instancesShutdown(s, instances)
+			instancesShutdown(instances)
 
 			logger.Info("Stopping networks")
 			networkShutdown(s)
@@ -1963,10 +1963,10 @@ func (d *Daemon) setupOpenFGA(apiURL string, apiToken string, storeID string) er
 		"openfga.store.id":  storeID,
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		// Reset to default authorizer.
 		d.authorizer, _ = auth.LoadAuthorizer(d.shutdownCtx, auth.DriverTLS, logger.Log, d.clientCerts)
 	})
@@ -2222,7 +2222,7 @@ func (d *Daemon) setupOpenFGA(apiURL string, apiToken string, storeID string) er
 
 	d.authorizer = openfgaAuthorizer
 
-	revert.Success()
+	reverter.Success()
 	return nil
 }
 
@@ -2336,7 +2336,7 @@ func (d *Daemon) hasMemberStateChanged(heartbeatData *cluster.APIHeartbeat) bool
 }
 
 // heartbeatHandler handles heartbeat requests from other cluster members.
-func (d *Daemon) heartbeatHandler(w http.ResponseWriter, r *http.Request, isLeader bool, hbData *cluster.APIHeartbeat) {
+func (d *Daemon) heartbeatHandler(w http.ResponseWriter, _ *http.Request, isLeader bool, hbData *cluster.APIHeartbeat) {
 	s := d.State()
 
 	var err error
