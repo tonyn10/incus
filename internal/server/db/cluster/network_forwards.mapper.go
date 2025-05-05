@@ -21,14 +21,6 @@ SELECT networks_forwards.id, networks_forwards.network_id, networks_forwards.nod
   ORDER BY networks_forwards.network_id, networks_forwards.listen_address
 `)
 
-var networkForwardObjectsByID = RegisterStmt(`
-SELECT networks_forwards.id, networks_forwards.network_id, networks_forwards.node_id, nodes.name AS location, networks_forwards.listen_address, networks_forwards.description, networks_forwards.ports
-  FROM networks_forwards
-  LEFT JOIN nodes ON networks_forwards.node_id = nodes.id
-  WHERE ( networks_forwards.id = ? )
-  ORDER BY networks_forwards.network_id, networks_forwards.listen_address
-`)
-
 var networkForwardObjectsByNetworkID = RegisterStmt(`
 SELECT networks_forwards.id, networks_forwards.network_id, networks_forwards.node_id, nodes.name AS location, networks_forwards.listen_address, networks_forwards.description, networks_forwards.ports
   FROM networks_forwards
@@ -37,11 +29,11 @@ SELECT networks_forwards.id, networks_forwards.network_id, networks_forwards.nod
   ORDER BY networks_forwards.network_id, networks_forwards.listen_address
 `)
 
-var networkForwardObjectsByNodeID = RegisterStmt(`
+var networkForwardObjectsByNetworkIDAndListenAddress = RegisterStmt(`
 SELECT networks_forwards.id, networks_forwards.network_id, networks_forwards.node_id, nodes.name AS location, networks_forwards.listen_address, networks_forwards.description, networks_forwards.ports
   FROM networks_forwards
   LEFT JOIN nodes ON networks_forwards.node_id = nodes.id
-  WHERE ( networks_forwards.node_id = ? )
+  WHERE ( networks_forwards.network_id = ? AND networks_forwards.listen_address = ? )
   ORDER BY networks_forwards.network_id, networks_forwards.listen_address
 `)
 
@@ -156,18 +148,18 @@ func GetNetworkForwards(ctx context.Context, db dbtx, filters ...NetworkForwardF
 	}
 
 	for i, filter := range filters {
-		if filter.NodeID != nil && filter.ID == nil && filter.NetworkID == nil && filter.ListenAddress == nil {
-			args = append(args, []any{filter.NodeID}...)
+		if filter.NetworkID != nil && filter.ListenAddress != nil && filter.ID == nil && filter.NodeID == nil {
+			args = append(args, []any{filter.NetworkID, filter.ListenAddress}...)
 			if len(filters) == 1 {
-				sqlStmt, err = Stmt(db, networkForwardObjectsByNodeID)
+				sqlStmt, err = Stmt(db, networkForwardObjectsByNetworkIDAndListenAddress)
 				if err != nil {
-					return nil, fmt.Errorf("Failed to get \"networkForwardObjectsByNodeID\" prepared statement: %w", err)
+					return nil, fmt.Errorf("Failed to get \"networkForwardObjectsByNetworkIDAndListenAddress\" prepared statement: %w", err)
 				}
 
 				break
 			}
 
-			query, err := StmtString(networkForwardObjectsByNodeID)
+			query, err := StmtString(networkForwardObjectsByNetworkIDAndListenAddress)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"networkForwardObjects\" prepared statement: %w", err)
 			}
@@ -192,30 +184,6 @@ func GetNetworkForwards(ctx context.Context, db dbtx, filters ...NetworkForwardF
 			}
 
 			query, err := StmtString(networkForwardObjectsByNetworkID)
-			if err != nil {
-				return nil, fmt.Errorf("Failed to get \"networkForwardObjects\" prepared statement: %w", err)
-			}
-
-			parts := strings.SplitN(query, "ORDER BY", 2)
-			if i == 0 {
-				copy(queryParts[:], parts)
-				continue
-			}
-
-			_, where, _ := strings.Cut(parts[0], "WHERE")
-			queryParts[0] += "OR" + where
-		} else if filter.ID != nil && filter.NetworkID == nil && filter.NodeID == nil && filter.ListenAddress == nil {
-			args = append(args, []any{filter.ID}...)
-			if len(filters) == 1 {
-				sqlStmt, err = Stmt(db, networkForwardObjectsByID)
-				if err != nil {
-					return nil, fmt.Errorf("Failed to get \"networkForwardObjectsByID\" prepared statement: %w", err)
-				}
-
-				break
-			}
-
-			query, err := StmtString(networkForwardObjectsByID)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"networkForwardObjects\" prepared statement: %w", err)
 			}

@@ -15,9 +15,8 @@ import (
 //generate-database:mapper reset -i -b "//go:build linux && cgo && !agent"
 //
 //generate-database:mapper stmt -e network_forward objects table=networks_forwards
-//generate-database:mapper stmt -e network_forward objects-by-ID table=networks_forwards
 //generate-database:mapper stmt -e network_forward objects-by-NetworkID table=networks_forwards
-//generate-database:mapper stmt -e network_forward objects-by-NodeID table=networks_forwards
+//generate-database:mapper stmt -e network_forward objects-by-NetworkID-and-ListenAddress table=networks_forwards
 //generate-database:mapper stmt -e network_forward create table=networks_forwards
 //generate-database:mapper stmt -e network_forward delete-by-NetworkID-and-ID table=networks_forwards
 //generate-database:mapper stmt -e network_forward id table=networks_forwards
