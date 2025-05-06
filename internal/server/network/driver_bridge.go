@@ -2489,9 +2489,38 @@ func (n *bridge) getExternalSubnetInUse() ([]externalSubnetUsage, error) {
 		}
 
 		// Get all network forward listen addresses for forwards assigned to this specific cluster member.
-		projectNetworksForwardsOnUplink, err = tx.GetProjectNetworkForwardListenAddressesOnMember(ctx)
+		networksByProjects, err := tx.GetNetworksAllProjects(ctx)
 		if err != nil {
 			return fmt.Errorf("Failed loading network forward listen addresses: %w", err)
+		}
+
+		for projectName, networks := range networksByProjects {
+			for _, networkName := range networks {
+				networkID, err := tx.GetNetworkID(ctx, projectName, networkName)
+				if err != nil {
+					return fmt.Errorf("Failed loading network forward listen addresses: %w", err)
+				}
+
+				// Get all network forward listen addresses for all networks (of any type) connected to our uplink.
+				forwardNetworkID := int(networkID)
+				networkForwards, err := dbCluster.GetNetworkForwards(ctx, tx.Tx(), dbCluster.NetworkForwardFilter{
+					NetworkID: &(forwardNetworkID),
+				})
+				if err != nil {
+					return fmt.Errorf("Failed loading network forward listen addresses: %w", err)
+				}
+
+				projectNetworksForwardsOnUplink = make(map[string]map[int64][]string)
+				for _, forward := range networkForwards {
+					// Filter network forwards that belong to this specific cluster member
+					if forward.NodeID.Valid && (forward.NodeID.Int64 == tx.GetNodeID()) {
+						if projectNetworksForwardsOnUplink[projectName] == nil {
+							projectNetworksForwardsOnUplink[projectName] = make(map[int64][]string)
+						}
+						projectNetworksForwardsOnUplink[projectName][networkID] = append(projectNetworksForwardsOnUplink[projectName][networkID], forward.ListenAddress)
+					}
+				}
+			}
 		}
 
 		externalSubnets, err = n.common.getExternalSubnetInUse(ctx, tx, n.name, true)
