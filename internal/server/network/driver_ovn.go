@@ -885,6 +885,7 @@ func (n *ovn) Validate(config map[string]string) error {
 			return err
 		}
 
+		forwards = make(map[int64]*api.NetworkForward)
 		for _, dbRecord := range dbRecords {
 			// Change to api format
 			forwardID := int64(dbRecord.ID)
@@ -3366,6 +3367,7 @@ func (n *ovn) Delete(clientType request.ClientType) error {
 				return fmt.Errorf("Failed loading network forwards: %w", err)
 			}
 
+			forwardListenAddresses = make(map[int64]string)
 			for _, dbRecord := range dbRecords {
 				// Get listen address
 				forwardID := int64(dbRecord.ID)

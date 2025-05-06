@@ -198,6 +198,7 @@ func networkForwardsGet(d *Daemon, r *http.Request) response.Response {
 				return err
 			}
 
+			records = make(map[int64]*api.NetworkForward)
 			for _, dbRecord := range dbRecords {
 				// Change to api format
 				forwardID := int64(dbRecord.ID)
@@ -242,6 +243,7 @@ func networkForwardsGet(d *Daemon, r *http.Request) response.Response {
 				return err
 			}
 
+			listenAddresses = make(map[int64]string)
 			for _, dbRecord := range dbRecords {
 				// Get listen address
 				forwardID := int64(dbRecord.ID)

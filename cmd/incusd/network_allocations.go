@@ -199,6 +199,7 @@ func networkAllocationsGet(d *Daemon, r *http.Request) response.Response {
 					return err
 				}
 
+				forwards = make(map[int64]*api.NetworkForward)
 				for _, dbRecord := range dbRecords {
 					// Change to api format
 					forwardID := int64(dbRecord.ID)

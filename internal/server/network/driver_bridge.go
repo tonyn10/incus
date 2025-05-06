@@ -2731,6 +2731,7 @@ func (n *bridge) ForwardCreate(forward api.NetworkForwardsPost, clientType reque
 					return err
 				}
 
+				listenAddresses = make(map[int64]string)
 				for _, dbRecord := range dbRecords {
 					// memberSpecific filtering
 					if !dbRecord.NodeID.Valid || (dbRecord.NodeID.Int64 == tx.GetNodeID()) {
@@ -3015,6 +3016,7 @@ func (n *bridge) forwardSetupFirewall() error {
 			return err
 		}
 
+		forwards = make(map[int64]*api.NetworkForward)
 		for _, dbRecord := range dbRecords {
 			// memberSpecific filtering (get all forwards for this cluster member)
 			if !dbRecord.NodeID.Valid || (dbRecord.NodeID.Int64 == tx.GetNodeID()) {

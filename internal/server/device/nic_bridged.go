@@ -875,6 +875,7 @@ func (d *nicBridged) Start() (*deviceConfig.RunConfig, error) {
 					return err
 				}
 
+				listenAddresses = make(map[int64]string)
 				for _, dbRecord := range dbRecords {
 					// memberSpecific filtering
 					if !dbRecord.NodeID.Valid || (dbRecord.NodeID.Int64 == tx.GetNodeID()) {
