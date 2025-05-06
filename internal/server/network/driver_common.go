@@ -1063,7 +1063,22 @@ func (n *common) forwardBGPSetupPrefixes() error {
 		var err error
 
 		// Retrieve network forwards before clearing existing prefixes, and separate them by IP family.
-		fwdListenAddresses, err = tx.GetNetworkForwardListenAddresses(ctx, n.ID(), true)
+		networkID := int(n.ID())
+		dbRecords, err := dbCluster.GetNetworkForwards(ctx, tx.Tx(), dbCluster.NetworkForwardFilter{
+			NetworkID: &networkID,
+		})
+		if err != nil {
+			return err
+		}
+
+		for _, dbRecord := range dbRecords {
+			// memberSpecific filtering
+			if !dbRecord.NodeID.Valid || (dbRecord.NodeID.Int64 == tx.GetNodeID()) {
+				// Get listen address
+				forwardID := int64(dbRecord.ID)
+				fwdListenAddresses[forwardID] = dbRecord.ListenAddress
+			}
+		}
 
 		return err
 	})

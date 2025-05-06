@@ -877,7 +877,23 @@ func (n *ovn) Validate(config map[string]string) error {
 	var forwards map[int64]*api.NetworkForward
 
 	err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-		forwards, err = tx.GetNetworkForwards(ctx, n.ID(), memberSpecific)
+		networkID := int(n.ID())
+		dbRecords, err := dbCluster.GetNetworkForwards(ctx, tx.Tx(), dbCluster.NetworkForwardFilter{
+			NetworkID: &networkID,
+		})
+		if err != nil {
+			return err
+		}
+
+		for _, dbRecord := range dbRecords {
+			// Change to api format
+			forwardID := int64(dbRecord.ID)
+			forward, err := dbRecord.ToAPI(ctx, tx.Tx())
+			if err != nil {
+				return err
+			}
+			forwards[forwardID] = forward
+		}
 
 		return err
 	})
@@ -3342,9 +3358,18 @@ func (n *ovn) Delete(clientType request.ClientType) error {
 		var loadBalancerListenAddresses map[int64]string
 
 		err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-			forwardListenAddresses, err = tx.GetNetworkForwardListenAddresses(ctx, n.ID(), memberSpecific)
+			networkID := int(n.ID())
+			dbRecords, err := dbCluster.GetNetworkForwards(ctx, tx.Tx(), dbCluster.NetworkForwardFilter{
+				NetworkID: &networkID,
+			})
 			if err != nil {
 				return fmt.Errorf("Failed loading network forwards: %w", err)
+			}
+
+			for _, dbRecord := range dbRecords {
+				// Get listen address
+				forwardID := int64(dbRecord.ID)
+				forwardListenAddresses[forwardID] = dbRecord.ListenAddress
 			}
 
 			loadBalancerListenAddresses, err = tx.GetNetworkLoadBalancerListenAddresses(ctx, n.ID(), memberSpecific)
@@ -5395,8 +5420,11 @@ func (n *ovn) ForwardCreate(forward api.NetworkForwardsPost, clientType request.
 				Description:   forward.Description,
 				Ports:         forward.Ports,
 			}
-			forwardID, err = dbCluster.CreateNetworkForward(ctx, tx.Tx(), dbRecord)
+			if forward.Ports == nil {
+				dbRecord.Ports = []api.NetworkForwardPort{}
+			}
 
+			forwardID, err = dbCluster.CreateNetworkForward(ctx, tx.Tx(), dbRecord)
 			if err == nil {
 				err = dbCluster.CreateNetworkForwardConfig(ctx, tx.Tx(), forwardID, forward.Config)
 			}

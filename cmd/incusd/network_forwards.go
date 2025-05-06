@@ -172,8 +172,6 @@ func networkForwardsGet(d *Daemon, r *http.Request) response.Response {
 		return response.BadRequest(fmt.Errorf("Network driver %q does not support forwards", n.Type()))
 	}
 
-	memberSpecific := false // Get forwards for all cluster members.
-
 	recursion := localUtil.IsRecursionRequest(r)
 
 	// Parse filter value.
@@ -192,7 +190,23 @@ func networkForwardsGet(d *Daemon, r *http.Request) response.Response {
 		var records map[int64]*api.NetworkForward
 
 		err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
-			records, err = tx.GetNetworkForwards(ctx, n.ID(), memberSpecific)
+			networkID := int(n.ID())
+			dbRecords, err := dbCluster.GetNetworkForwards(ctx, tx.Tx(), dbCluster.NetworkForwardFilter{
+				NetworkID: &networkID,
+			})
+			if err != nil {
+				return err
+			}
+
+			for _, dbRecord := range dbRecords {
+				// Change to api format
+				forwardID := int64(dbRecord.ID)
+				forward, err := dbRecord.ToAPI(ctx, tx.Tx())
+				if err != nil {
+					return err
+				}
+				records[forwardID] = forward
+			}
 
 			return err
 		})
@@ -220,7 +234,19 @@ func networkForwardsGet(d *Daemon, r *http.Request) response.Response {
 		var listenAddresses map[int64]string
 
 		err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
-			listenAddresses, err = tx.GetNetworkForwardListenAddresses(ctx, n.ID(), memberSpecific)
+			networkID := int(n.ID())
+			dbRecords, err := dbCluster.GetNetworkForwards(ctx, tx.Tx(), dbCluster.NetworkForwardFilter{
+				NetworkID: &networkID,
+			})
+			if err != nil {
+				return err
+			}
+
+			for _, dbRecord := range dbRecords {
+				// Get listen address
+				forwardID := int64(dbRecord.ID)
+				listenAddresses[forwardID] = dbRecord.ListenAddress
+			}
 
 			return err
 		})
@@ -487,15 +513,15 @@ func networkForwardGet(d *Daemon, r *http.Request) response.Response {
 			NetworkID:     &networkID,
 			ListenAddress: &listenAddress,
 		})
-
 		if err != nil {
 			return err
 		}
 
 		filteredRecords := make([]dbCluster.NetworkForward, 0, len(dbRecords))
 		for _, dbRecord := range dbRecords {
-			// memberSpecific filtering
-			if memberSpecific && (!dbRecord.NodeID.Valid || (dbRecord.NodeID.Int64 == tx.GetNodeID())) {
+			// Include all records if memberSpecific is turned off
+			// Otherwise, filter based offed of dbRecords with same node id
+			if !memberSpecific || (!dbRecord.NodeID.Valid || (dbRecord.NodeID.Int64 == tx.GetNodeID())) {
 				filteredRecords = append(filteredRecords, dbRecord)
 			}
 		}
@@ -645,15 +671,15 @@ func networkForwardPut(d *Daemon, r *http.Request) response.Response {
 				NetworkID:     &networkID,
 				ListenAddress: &listenAddress,
 			})
-
 			if err != nil {
 				return err
 			}
 
 			filteredRecords := make([]dbCluster.NetworkForward, 0, len(dbRecords))
 			for _, dbRecord := range dbRecords {
-				// memberSpecific filtering
-				if memberSpecific && (!dbRecord.NodeID.Valid || (dbRecord.NodeID.Int64 == tx.GetNodeID())) {
+				// Include all records if memberSpecific is turned off
+				// Otherwise, filter based offed of dbRecords with same node id
+				if !memberSpecific || (!dbRecord.NodeID.Valid || (dbRecord.NodeID.Int64 == tx.GetNodeID())) {
 					filteredRecords = append(filteredRecords, dbRecord)
 				}
 			}
