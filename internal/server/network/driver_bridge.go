@@ -2841,6 +2841,8 @@ func (n *bridge) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, 
 	var curForwardID int64
 	var curForward *api.NetworkForward
 
+	var curNodeID sql.NullInt64
+
 	err := n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 		var err error
 
@@ -2872,6 +2874,7 @@ func (n *bridge) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, 
 		dbNetworkForward := filteredRecords[0]
 		curForwardID = int64(dbNetworkForward.ID)
 		curForward, err = dbNetworkForward.ToAPI(ctx, tx.Tx())
+		curNodeID = dbNetworkForward.NodeID
 
 		return err
 	})
@@ -2907,7 +2910,7 @@ func (n *bridge) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, 
 	defer reverter.Fail()
 
 	err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-		return tx.UpdateNetworkForward(ctx, n.ID(), curForwardID, &newForward.NetworkForwardPut)
+		return dbCluster.UpdateNetworkForwardAPI(ctx, tx.Tx(), curForwardID, int(n.ID()), curNodeID, curForward.ListenAddress, &newForward.NetworkForwardPut)
 	})
 	if err != nil {
 		return err
@@ -2915,7 +2918,7 @@ func (n *bridge) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, 
 
 	reverter.Add(func() {
 		_ = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-			return tx.UpdateNetworkForward(ctx, n.ID(), curForwardID, &curForward.NetworkForwardPut)
+			return dbCluster.UpdateNetworkForwardAPI(ctx, tx.Tx(), curForwardID, int(n.ID()), curNodeID, curForward.ListenAddress, &newForward.NetworkForwardPut)
 		})
 		_ = n.forwardSetupFirewall()
 		_ = n.forwardBGPSetupPrefixes()

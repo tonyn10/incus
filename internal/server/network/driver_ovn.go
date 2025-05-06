@@ -5511,6 +5511,8 @@ func (n *ovn) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, cli
 		var curForwardID int64
 		var curForward *api.NetworkForward
 
+		var curNodeID sql.NullInt64
+
 		err := n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 			var err error
 
@@ -5519,6 +5521,7 @@ func (n *ovn) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, cli
 			if err == nil {
 				curForwardID = int64(dbRecord.ID)
 				curForward, err = dbRecord.ToAPI(ctx, tx.Tx())
+				curNodeID = dbRecord.NodeID
 			}
 
 			return err
@@ -5568,7 +5571,7 @@ func (n *ovn) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, cli
 		})
 
 		err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-			return tx.UpdateNetworkForward(ctx, n.ID(), curForwardID, &newForward.NetworkForwardPut)
+			return dbCluster.UpdateNetworkForwardAPI(ctx, tx.Tx(), curForwardID, int(n.ID()), curNodeID, curForward.ListenAddress, &newForward.NetworkForwardPut)
 		})
 		if err != nil {
 			return err
@@ -5576,7 +5579,7 @@ func (n *ovn) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, cli
 
 		reverter.Add(func() {
 			_ = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-				return tx.UpdateNetworkForward(ctx, n.ID(), curForwardID, &curForward.NetworkForwardPut)
+				return dbCluster.UpdateNetworkForwardAPI(ctx, tx.Tx(), curForwardID, int(n.ID()), curNodeID, curForward.ListenAddress, &newForward.NetworkForwardPut)
 			})
 		})
 

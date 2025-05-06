@@ -70,3 +70,26 @@ func (n *NetworkForward) ToAPI(ctx context.Context, tx *sql.Tx) (*api.NetworkFor
 
 	return &resp, nil
 }
+
+// Update the description and ports of the network forward.
+func UpdateNetworkForwardAPI(ctx context.Context, db tx, curForwardID int64, curNetworkID int, curNodeID sql.NullInt64, curListenAddress string, newForward *api.NetworkForwardPut) error {
+	newRecord := NetworkForward{
+		NetworkID:     curNetworkID,
+		NodeID:        curNodeID,
+		ListenAddress: curListenAddress,
+		Description:   newForward.Description,
+		Ports:         newForward.Ports,
+	}
+	if newForward.Ports == nil {
+		newRecord.Ports = []api.NetworkForwardPort{}
+	}
+
+	// Update the network forward
+	err := UpdateNetworkForward(ctx, db, curNetworkID, curListenAddress, newRecord)
+	if err != nil {
+		return err
+	}
+
+	// Update the network forward config
+	return UpdateNetworkForwardConfig(ctx, db, curForwardID, newForward.Config)
+}
