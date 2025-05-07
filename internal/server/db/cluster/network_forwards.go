@@ -71,7 +71,7 @@ func (n *NetworkForward) ToAPI(ctx context.Context, tx *sql.Tx) (*api.NetworkFor
 	return &resp, nil
 }
 
-// Update the description and ports of the network forward.
+// UpdateNetworkForwardAPI updates the description and ports of the network forward.
 func UpdateNetworkForwardAPI(ctx context.Context, db tx, curForwardID int64, curNetworkID int, curNodeID sql.NullInt64, curListenAddress string, newForward *api.NetworkForwardPut) error {
 	newRecord := NetworkForward{
 		NetworkID:     curNetworkID,
