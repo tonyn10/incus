@@ -80,6 +80,7 @@ func UpdateNetworkForwardAPI(ctx context.Context, db tx, curForwardID int64, cur
 		Description:   newForward.Description,
 		Ports:         newForward.Ports,
 	}
+
 	if newForward.Ports == nil {
 		newRecord.Ports = []api.NetworkForwardPort{}
 	}

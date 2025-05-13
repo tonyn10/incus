@@ -893,6 +893,7 @@ func (n *ovn) Validate(config map[string]string) error {
 			if err != nil {
 				return err
 			}
+
 			forwards[forwardID] = forward
 		}
 
@@ -5415,6 +5416,7 @@ func (n *ovn) ForwardCreate(forward api.NetworkForwardsPost, clientType request.
 				Valid: memberSpecific,
 				Int64: tx.GetNodeID(),
 			}
+
 			dbRecord := dbCluster.NetworkForward{
 				NetworkID:     int(n.ID()),
 				NodeID:        nodeID,
@@ -5422,6 +5424,7 @@ func (n *ovn) ForwardCreate(forward api.NetworkForwardsPost, clientType request.
 				Description:   forward.Description,
 				Ports:         forward.Ports,
 			}
+			
 			if forward.Ports == nil {
 				dbRecord.Ports = []api.NetworkForwardPort{}
 			}

@@ -207,6 +207,7 @@ func networkAllocationsGet(d *Daemon, r *http.Request) response.Response {
 					if err != nil {
 						return err
 					}
+
 					forwards[forwardID] = forward
 				}
 

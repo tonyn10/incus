@@ -206,6 +206,7 @@ func networkForwardsGet(d *Daemon, r *http.Request) response.Response {
 				if err != nil {
 					return err
 				}
+
 				records[forwardID] = forward
 			}
 
@@ -531,6 +532,7 @@ func networkForwardGet(d *Daemon, r *http.Request) response.Response {
 		if len(filteredRecords) == 0 {
 			return api.StatusErrorf(http.StatusNotFound, "Network forward not found")
 		}
+
 		if len(filteredRecords) > 1 {
 			return api.StatusErrorf(http.StatusConflict, "Network forward found on more than one cluster member. Please target a specific member")
 		}
@@ -689,6 +691,7 @@ func networkForwardPut(d *Daemon, r *http.Request) response.Response {
 			if len(filteredRecords) == 0 {
 				return api.StatusErrorf(http.StatusNotFound, "Network forward not found")
 			}
+
 			if len(filteredRecords) > 1 {
 				return api.StatusErrorf(http.StatusConflict, "Network forward found on more than one cluster member. Please target a specific member")
 			}

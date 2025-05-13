@@ -2517,6 +2517,7 @@ func (n *bridge) getExternalSubnetInUse() ([]externalSubnetUsage, error) {
 						if projectNetworksForwardsOnUplink[projectName] == nil {
 							projectNetworksForwardsOnUplink[projectName] = make(map[int64][]string)
 						}
+
 						projectNetworksForwardsOnUplink[projectName][networkID] = append(projectNetworksForwardsOnUplink[projectName][networkID], forward.ListenAddress)
 					}
 				}
@@ -2640,6 +2641,7 @@ func (n *bridge) ForwardCreate(forward api.NetworkForwardsPost, clientType reque
 		if len(filteredRecords) == 0 {
 			return api.StatusErrorf(http.StatusNotFound, "Network forward not found")
 		}
+
 		if len(filteredRecords) > 1 {
 			return api.StatusErrorf(http.StatusConflict, "Network forward found on more than one cluster member. Please target a specific member")
 		}
@@ -2699,6 +2701,7 @@ func (n *bridge) ForwardCreate(forward api.NetworkForwardsPost, clientType reque
 			Valid: memberSpecific,
 			Int64: tx.GetNodeID(),
 		}
+
 		dbRecord := dbCluster.NetworkForward{
 			NetworkID:     int(n.ID()),
 			NodeID:        nodeID,
@@ -2706,6 +2709,7 @@ func (n *bridge) ForwardCreate(forward api.NetworkForwardsPost, clientType reque
 			Description:   forward.Description,
 			Ports:         forward.Ports,
 		}
+
 		if forward.Ports == nil {
 			dbRecord.Ports = []api.NetworkForwardPort{}
 		}
@@ -2866,6 +2870,7 @@ func (n *bridge) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, 
 		if len(filteredRecords) == 0 {
 			return api.StatusErrorf(http.StatusNotFound, "Network forward not found")
 		}
+
 		if len(filteredRecords) > 1 {
 			return api.StatusErrorf(http.StatusConflict, "Network forward found on more than one cluster member. Please target a specific member")
 		}
@@ -2963,6 +2968,7 @@ func (n *bridge) ForwardDelete(listenAddress string, clientType request.ClientTy
 		if len(filteredRecords) == 0 {
 			return api.StatusErrorf(http.StatusNotFound, "Network forward not found")
 		}
+
 		if len(filteredRecords) > 1 {
 			return api.StatusErrorf(http.StatusConflict, "Network forward found on more than one cluster member. Please target a specific member")
 		}
@@ -2994,6 +3000,7 @@ func (n *bridge) ForwardDelete(listenAddress string, clientType request.ClientTy
 				Valid: memberSpecific,
 				Int64: tx.GetNodeID(),
 			}
+
 			dbRecord := dbCluster.NetworkForward{
 				NetworkID:     int(n.ID()),
 				NodeID:        nodeID,
@@ -3001,6 +3008,7 @@ func (n *bridge) ForwardDelete(listenAddress string, clientType request.ClientTy
 				Description:   forward.Description,
 				Ports:         forward.Ports,
 			}
+			
 			if forward.Ports == nil {
 				dbRecord.Ports = []api.NetworkForwardPort{}
 			}
@@ -3058,6 +3066,7 @@ func (n *bridge) forwardSetupFirewall() error {
 				if err != nil {
 					return err
 				}
+				
 				forwards[forwardID] = forward
 			}
 		}

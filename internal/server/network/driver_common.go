@@ -1171,9 +1171,11 @@ func (n *common) getExternalSubnetInUse(ctx context.Context, tx *db.ClusterTx, u
 				if err != nil {
 					return nil, err
 				}
+
 				networkConfig := apiNetwork.Config
 				satisfiesUplinkReq = networkConfig["network"] == uplinkNetworkName // network references uplink network in its config
 			}
+
 			if !satisfiesUplinkReq {
 				continue
 			}
@@ -1186,6 +1188,7 @@ func (n *common) getExternalSubnetInUse(ctx context.Context, tx *db.ClusterTx, u
 			if err != nil {
 				return nil, fmt.Errorf("Failed loading network forward listen addresses: %w", err)
 			}
+
 			projectNetworksForwardsOnUplink = make(map[string]map[string][]string)
 			for _, forward := range networkForwards {
 				// memberSpecific requirements

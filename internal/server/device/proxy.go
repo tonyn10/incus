@@ -303,6 +303,7 @@ func (d *proxy) validateListenAddressConflicts(proxyListenAddr net.IP) error {
 						if projectNetworksForwardsOnUplink[projectName] == nil {
 							projectNetworksForwardsOnUplink[projectName] = make(map[int64][]string)
 						}
+
 						projectNetworksForwardsOnUplink[projectName][networkID] = append(projectNetworksForwardsOnUplink[projectName][networkID], forward.ListenAddress)
 					}
 				}
